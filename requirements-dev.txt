@@ -1,0 +1,4 @@
+# Development / build dependencies (exact versions tested).
+-r requirements.txt
+pytest==9.0.3
+pyinstaller==6.20.0

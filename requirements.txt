@@ -1,0 +1,4 @@
+# Runtime dependencies (exact versions tested). Install: python -m pip install -r requirements.txt
+# scapy 2.7.0 is the first release without the pickle-based session loading issue (CVE-2025-71463).
+scapy==2.7.0
+websockets==13.0.1

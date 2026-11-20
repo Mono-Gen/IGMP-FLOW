@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IGMP-FLOW - Real-time multicast topology and recorder</title>
+    
+    <!-- アイコンおよびリッチフォント -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="icon" href="favicon.ico" sizes="any">
+    <link rel="stylesheet" href="style.css">
+    
+    <!-- vis-network CDN: 高性能でゴムのように弾むトポロジ描画ライブラリ -->
+    <script type="text/javascript" src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+</head>
+<body>
+
+    <!-- プレミアムオーブ背景演出 -->
+    <div class="bg-glow-orb"></div>
+    <div class="bg-glow-orb-right"></div>
+
+    <!-- 1. ヘッダーセクション -->
+    <header>
+        <div class="logo-section">
+            <h1 id="app-title"><i class="fa-solid fa-diagram-project"></i> IGMP-FLOW</h1>
+        </div>
+        <!-- NIC選択用セレクトボックス -->
+        <div class="nic-selector-container">
+            <i class="fa-solid fa-network-wired"></i>
+            <select id="nic-selector" class="nic-select" title="Select the network interface to monitor">
+                <option value="">Loading interfaces...</option>
+            </select>
+        </div>
+
+        <!-- 接続ステータス -->
+        <div class="status-badge" id="conn-badge">
+            <div class="status-dot" id="conn-dot"></div>
+            <span id="conn-text">Disconnected (reconnecting...)</span>
+        </div>
+    </header>
+
+
+
+    <!-- 2. フィルタ・状態バー: フィルタはサーバー側で適用され、全パケットはPCAPに記録されます -->
+    <section class="filter-bar" aria-label="Display filters and status">
+        <div class="filter-group" id="filter-protos">
+            <label><input type="checkbox" value="IGMP" checked> IGMP</label>
+            <label title="Dante default (IEEE 1588-2002)"><input type="checkbox" value="PTPv1" checked> PTPv1</label>
+            <label title="AES67 / ST 2110 (IEEE 1588-2008/2019)"><input type="checkbox" value="PTPv2" checked> PTPv2</label>
+            <label><input type="checkbox" value="mDNS" checked> mDNS</label>
+            <label><input type="checkbox" value="SSDP" checked> SSDP</label>
+            <label><input type="checkbox" value="SAP" checked> SAP</label>
+            <label><input type="checkbox" value="LLMNR" checked> LLMNR</label>
+            <label><input type="checkbox" value="Dante-ConMon" checked> Dante ConMon</label>
+            <label><input type="checkbox" value="Dante-Audio" checked> Dante audio</label>
+            <label><input type="checkbox" value="AES67-Audio" checked> AES67 audio</label>
+            <label><input type="checkbox" value="Multicast-Other" checked> Other multicast</label>
+        </div>
+        <details class="ptp-types">
+            <summary>PTP types</summary>
+            <div class="filter-group" id="filter-ptp-types">
+                <label><input type="checkbox" value="Sync" checked> Sync</label>
+                <label><input type="checkbox" value="Follow_Up" checked> Follow_Up</label>
+                <label><input type="checkbox" value="Announce" checked> Announce</label>
+                <label><input type="checkbox" value="Delay_Req" checked> Delay_Req</label>
+                <label><input type="checkbox" value="Delay_Resp" checked> Delay_Resp</label>
+                <label><input type="checkbox" value="PDelay_Req" checked> PDelay_Req</label>
+                <label><input type="checkbox" value="PDelay_Resp" checked> PDelay_Resp</label>
+                <label><input type="checkbox" value="PDelay_Resp_Follow_Up" checked> PDelay_Resp_FU</label>
+                <label><input type="checkbox" value="Signaling" checked> Signaling</label>
+                <label><input type="checkbox" value="Management" checked> Management</label>
+            </div>
+        </details>
+        <input type="text" id="filter-text" class="filter-input" placeholder="Filter by IP / MAC / group / device name" title="Only matching traffic is sent to the UI (everything is still recorded to PCAP)">
+        <label class="filter-raw" title="Show data-plane (audio) packets one by one. Use together with a filter."><input type="checkbox" id="filter-raw"> Show data plane per packet</label>
+        <span class="filter-sep"></span>
+        <input type="text" id="export-since" class="filter-input small" placeholder="From YYYY-MM-DD HH:MM:SS">
+        <input type="text" id="export-until" class="filter-input small" placeholder="To YYYY-MM-DD HH:MM:SS">
+        <select id="export-data-mode" class="filter-input small" title="How data-plane (audio) packets appear in the CSV">
+            <option value="aggregate">Audio: 1 s aggregate</option>
+            <option value="raw">Audio: every packet</option>
+            <option value="none">Audio: exclude</option>
+        </select>
+        <button class="log-btn" id="btn-export" title="Generate a CSV from the PCAP files (current filters apply)"><i class="fa-solid fa-file-csv"></i> Export CSV</button>
+        <button class="log-btn" id="btn-capture" title="Stop/start the capture itself (nothing is written to PCAP while stopped; a new PCAP file starts on resume)">
+            <i class="fa-solid fa-circle-stop"></i> <span id="capture-btn-label">Stop capture</span>
+        </button>
+        <button class="log-btn" id="btn-shutdown" title="Exit IGMP-FLOW (monitoring and PCAP recording stop too)">
+            <i class="fa-solid fa-power-off"></i> Exit
+        </button>
+        <span class="shutdown-note" title="The app keeps running after the browser is closed. To stop it, use the Exit button or end IGMP-FLOW in Task Manager.">ⓘ Monitoring continues even if you close the browser</span>
+        <span class="status-chip" id="querier-status" title="IGMP querier status">Querier: checking</span>
+        <span class="status-chip" id="ptp-status" title="PTP anomaly detection (lost Announce, multiple grandmasters, interval mismatch)">PTP: ---</span>
+        <span class="status-chip" id="capture-status" title="PCAP recording status">PCAP: ---</span>
+        <span class="status-chip" id="ui-notice" hidden></span>
+    </section>
+
+    <!-- 3. メインコンテナ -->
+    <div class="main-container">
+        
+        <!-- A. トポロジ・マインドマップパネル -->
+        <main class="map-panel" aria-label="Topology map">
+            <div id="topology-canvas"></div>
+            
+            <!-- マップ凡例（Legend）表示用カード -->
+            <div class="map-legend" id="map-legend-card">
+                <h3><i class="fa-solid fa-circle-info"></i> Legend</h3>
+                <div class="legend-item">
+                    <span class="legend-icon icon-querier"><i class="fa-solid fa-crown"></i></span>
+                    <span class="legend-label">Querier (liveness checks)</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-icon icon-group"><i class="fa-solid fa-users"></i></span>
+                    <span class="legend-label">Multicast group (channel)</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-icon icon-sync"><i class="fa-solid fa-clock"></i></span>
+                    <span class="legend-label">Clock sync group (PTPv1/v2)</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-icon icon-device"><i class="fa-solid fa-laptop"></i></span>
+                    <span class="legend-label">Device (host)</span>
+                </div>
+            </div>
+            
+            <!-- 操作用クイックツールバー -->
+            <div class="canvas-toolbar">
+                <button class="toolbar-btn" id="btn-fit" title="Fit the whole topology">
+                    <i class="fa-solid fa-expand"></i>
+                </button>
+                <button class="toolbar-btn" id="btn-freeze" title="Freeze/resume the topology layout (monitoring is not paused)">
+                    <i class="fa-solid fa-pause"></i>
+                </button>
+                <button class="toolbar-btn" id="btn-reset" title="Restart: clear the map, log and PTP/querier monitors (PCAP switches to a new file; the map is rebuilt from subsequent Queries/Reports)">
+                    <i class="fa-solid fa-arrows-rotate"></i>
+                </button>
+            </div>
+        </main>
+
+        <!-- 図とパネルの境界: ドラッグで高さを調整できる(位置はブラウザに記憶) -->
+        <div class="splitter" id="splitter" role="separator" aria-orientation="horizontal" title="Drag to resize the map and log / double-click to reset"></div>
+
+        <!-- B. リアルタイムストリーミングログパネル -->
+        <section class="log-panel" aria-label="Real-time log">
+            <div class="log-header">
+                <div class="panel-tabs" role="tablist">
+                    <button class="panel-tab active" role="tab" data-tab="log" id="tab-log"><i class="fa-solid fa-terminal"></i> Log <span class="tab-badge" id="badge-log" hidden></span></button>
+                    <button class="panel-tab" role="tab" data-tab="ptp" id="tab-ptp"><i class="fa-solid fa-clock"></i> PTP status <span class="tab-badge warn" id="badge-ptp" hidden></span></button>
+                    <button class="panel-tab" role="tab" data-tab="flow" id="tab-flow"><i class="fa-solid fa-wave-square"></i> Stream stats <span class="tab-badge" id="badge-flow" hidden></span></button>
+                </div>
+                <div class="log-actions">
+                    <button class="log-btn" id="btn-maximize-panel" title="Expand the lower panel to full height (click again to restore)">
+                        <i class="fa-solid fa-up-right-and-down-left-from-center"></i> <span id="maximize-label">Maximize</span>
+                    </button>
+                    <button class="log-btn" id="btn-pause-log" title="Pause adding to the log (monitoring and PCAP recording continue; queued rows appear on resume)">
+                        <i class="fa-solid fa-pause"></i> <span id="pause-log-label">Pause log</span>
+                    </button>
+                    <button class="log-btn clear-btn" id="btn-clear-log" title="Clear the log view">
+                        <i class="fa-solid fa-trash-can"></i> Clear
+                    </button>
+                </div>
+            </div>
+            
+            <!-- PTP状態表: 実測間隔と宣言間隔、グランドマスター情報、異常 -->
+            <div class="tab-pane" id="pane-ptp" hidden>
+                <div id="ptp-alerts"></div>
+                <table class="log-table">
+                    <thead>
+                        <tr>
+                            <th>Ver</th><th>Domain</th><th>Source</th><th>Type</th><th>Measured</th><th>Declared</th><th>GM / priority</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ptp-list-body"></tbody>
+                </table>
+            </div>
+
+            <!-- データ面(音声等)の1秒集計 -->
+            <div class="tab-pane" id="pane-flow" hidden>
+                <table class="log-table">
+                    <thead>
+                        <tr>
+                            <th>Protocol</th><th>Source</th><th>Group</th><th>pps</th><th>bps</th>
+                        </tr>
+                    </thead>
+                    <tbody id="flow-list-body"></tbody>
+                </table>
+            </div>
+
+            <div class="log-body tab-pane" id="pane-log">
+                <table class="log-table" id="log-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 20%;">Time</th>
+                            <th style="width: 15%;">Protocol</th>
+                            <th style="width: 25%;">Event</th>
+                            <th style="width: 25%;">Host (IP / MAC)</th>
+                            <th style="width: 15%;">Multicast group</th>
+                        </tr>
+                    </thead>
+                    <tbody id="log-list-body">
+                        <!-- ここにバックエンドから届くリアルタイムログ行が動的に追加されます -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+        
+    </div>
+
+    <!-- アプリケーションロジックのロード -->
+    <script src="strings.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
