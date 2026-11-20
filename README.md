@@ -7,6 +7,14 @@ IGMP-FLOW passively captures IGMP and multicast traffic on a mirror (SPAN) port 
 draws who joins which multicast group, watches the IGMP querier and PTP clock health, and keeps a
 complete PCAP record for later troubleshooting.
 
+## Screenshots
+
+Generated from the built-in demo (`python scripts/demo_simulator.py`); all names and addresses are fictional.
+
+![Topology map and event log](assets/screenshot_main.png)
+
+![PTP status with clock and grandmaster warnings](assets/screenshot_ptp.png)
+
 ## Features
 
 - **Topology map**: queriers, hosts and multicast groups, updated live from IGMP Join / Leave / Query.
