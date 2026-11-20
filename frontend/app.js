@@ -506,6 +506,9 @@ function initPanelLayout() {
     const splitter = document.getElementById("splitter");
 
     document.querySelectorAll(".panel-tab").forEach(t => t.addEventListener("click", () => showTab(t.dataset.tab)));
+    // ?tab=ptp|flow|log で開くタブを指定できる(ドキュメント用のスクリーンショット撮影などに使う)
+    const initialTab = new URLSearchParams(location.search).get("tab");
+    if (["log", "ptp", "flow"].includes(initialTab)) showTab(initialTab);
 
     // 保存済みの高さを復元(ブラウザの保存が使えない環境でも動作する)
     try {

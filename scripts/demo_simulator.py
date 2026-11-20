@@ -82,7 +82,9 @@ def scenario() -> List[Dict[str, Any]]:
 
 
 def main() -> int:
+    demo_nics = {"nics": [{"index": 1, "name": "Ethernet (demo)", "ip": "192.168.1.5", "guid": "demo"}], "active_index": 1}
     server = WebSocketServer(
+        on_get_nics=lambda: demo_nics,
         on_get_status=lambda: [{"type": "capture_state", "running": True},
                                {"type": "capture_status", "enabled": True, "packets": 123456, "dropped": 0,
                                 "error": None, "disk_warning": False, "sync_warning": False}],
