@@ -504,6 +504,9 @@ body::after {
 .main-container.log-maximized .map-panel, .main-container.log-maximized .splitter { display: none; }
 .main-container.log-maximized .log-panel { flex: 1 1 auto; }
 
-/* パッシブ監視の注記。警告ではなく常設の説明なので控えめな色にする */
-.status-chip.passive { background: rgba(148, 163, 184, 0.15); color: #cbd5e1; cursor: help; }
+/* パッシブ監視の注記。常設の説明なので、異常色(赤)ではなく「情報」の青で目立たせる。
+   Join/Leave不可視の診断が出ている間だけ .warn で黄色にし、問題の可能性と連動させる */
+.status-chip.passive { background: rgba(59, 130, 246, 0.2); color: #93c5fd; font-weight: 600; cursor: help; }
+.status-chip.passive.warn { background: rgba(245, 158, 11, 0.25); color: #fcd34d; }
+.passive-hint { cursor: help; }
 .pane-note { margin: 4px 8px 6px; font-size: 12px; color: #94a3b8; }

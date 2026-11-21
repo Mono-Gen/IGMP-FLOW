@@ -41,7 +41,7 @@ from backend.constants import (
 from backend.dns_resolver import DNSResolver
 from backend.flow_aggregator import FlowAggregator
 from backend.logger_manager import LoggerManager
-from backend.nic_manager import choose_default_nic, choose_nic_interactive, list_nics
+from backend.nic_manager import choose_default_nic, choose_nic_interactive, list_nics, own_addresses
 from backend.packet_analyzer import PacketAnalyzer, check_npcap_installed
 from backend.paths import frontend_dir, is_cloud_synced_path
 from backend.pcap_export import export_captures, parse_local_datetime, DATA_MODES
@@ -54,6 +54,9 @@ from backend.websocket_server import WebSocketServer
 # キャプチャフィルタ(BPF): IGMP、IPv4マルチキャスト全般、ARP(IP-MAC学習用)
 # ユニキャストのUDP(Dante音声のユニキャスト等)は本ツールの対象外のため取得しない
 CAPTURE_BPF = "igmp or ip multicast or arp"
+
+# 端末が送るIGMP Report由来のイベント(Join/Leave等)。Report可視性の診断に数える
+IGMP_REPORT_EVENT_CODES = frozenset({"igmp_join", "igmp_leave", "igmp_source_update", "igmp_report_unparsed"})
 
 # 状態通知(capture_status / querier_status)を定期配信する間隔(秒)
 STATUS_BROADCAST_INTERVAL_SECONDS = 5.0
@@ -240,7 +243,12 @@ class IGMPFlowApp:
                     event_data["resolved_name"] = resolved_name
 
                 if event_data.get("is_querier"):
-                    self.querier_monitor.observe_query(src_ip, event_data.get("src_mac", ""), event_data.get("version", 0))
+                    self.querier_monitor.observe_query(
+                        src_ip, event_data.get("src_mac", ""), event_data.get("version", 0),
+                        general=event_data.get("event_code") == "igmp_query",
+                    )
+                elif event_data.get("event_code") in IGMP_REPORT_EVENT_CODES:
+                    self.querier_monitor.observe_report(src_ip, event_data.get("src_mac", ""))
 
                 if event_data["proto"] == "PTP":
                     self.ptp_monitor.observe(event_data)
@@ -260,6 +268,8 @@ class IGMPFlowApp:
         """キャプチャを開始します（ロック取得済み前提）。"""
         if self._sniff_running:
             return
+        # 自分のReportを他の端末のReportと数えないよう、キャプチャNICのアドレスを監視器へ渡す
+        self.querier_monitor.set_own_addresses(*own_addresses(self.active_interface))
         self._sniffer = AsyncSniffer(
             iface=self.active_interface,
             prn=self._packet_callback,
@@ -397,7 +407,7 @@ class IGMPFlowApp:
 
     def _ticker_loop(self) -> None:
         """1秒ごとにデータ面フローを集計配信し、状態通知を定期/変化時に配信するスレッド本体。"""
-        last_state: Optional[str] = None
+        last_state: Optional[tuple] = None
         last_status_at = 0.0
         while self._running:
             time.sleep(UI_AGGREGATE_INTERVAL_SECONDS)
@@ -420,8 +430,10 @@ class IGMPFlowApp:
 
                 querier = self.querier_monitor.status()
                 now = time.monotonic()
-                if querier["state"] != last_state or now - last_status_at >= STATUS_BROADCAST_INTERVAL_SECONDS:
-                    last_state = querier["state"]
+                # Report可視性の診断が切り替わった時も、定期配信を待たずにすぐ知らせる
+                state_key = (querier["state"], querier["reports_hidden"])
+                if state_key != last_state or now - last_status_at >= STATUS_BROADCAST_INTERVAL_SECONDS:
+                    last_state = state_key
                     last_status_at = now
                     self.ws_server.broadcast(querier)
                     self.ws_server.broadcast(self.capture_state_message())

@@ -704,6 +704,12 @@ function renderQuerierStatus(s) {
         el.textContent = STR.querierChecking;
         el.className = "status-chip";
     }
+    // Queryは届くのに他の端末のReportが届かない: ミラーではない通常ポートの可能性を知らせる
+    const hint = document.getElementById("report-visibility");
+    if (hint) hint.hidden = !s.reports_hidden;
+    // 常設のPassive注記も、診断が出ている間だけ黄色にして原因(Joinしない受動監視)と結び付ける
+    const passive = document.getElementById("passive-status");
+    if (passive) passive.classList.toggle("warn", !!s.reports_hidden);
 }
 
 /** PCAP記録の状態(件数・取りこぼし・エラー・容量警告)をチップに反映する。 */

@@ -65,6 +65,10 @@ Try the UI without any hardware: `python scripts/demo_simulator.py` replays a sa
 - **Export CSV** with optional time range (`YYYY-MM-DD HH:MM:SS`, local time) and the audio handling option.
 - **Stop capture / Start capture**, **Exit**.
 - **Status chips**: *Querier* (who is the IGMP querier; red when none is seen), *PTP* (warnings), *PCAP* (packets recorded, drops).
+- **No Join/Leave seen** (yellow chip): Queries arrive, but no IGMP Report from any other device has been seen for 30 s after a
+  General Query. With IGMP snooping, Reports go only to the switch's router (querier) port, so this usually means the PC is on a
+  normal port, not a mirror (SPAN) port. It also appears when no device has joined any group. Reports sent by this PC itself are
+  not counted. The chip clears once a Report from another device is seen, and is re-evaluated after Reset or a NIC change.
 
 ### 3.2 Topology map (upper area)
 
@@ -126,6 +130,7 @@ Command line options of the app: `-i/--interface`, `--interactive`, `-p/--port`,
 | "Npcap is not installed" at start | Install Npcap (section 1.2) and restart |
 | NIC list empty, or nothing is captured | Run as administrator; check Npcap is installed; select the NIC connected to the mirror port; confirm the mirror is configured on the switch |
 | A group is on the map but grey / missing from Stream stats | Normal on a non-mirror port with IGMP snooping: IGMP-FLOW does not join, so the switch does not forward the stream here. Use a mirror (SPAN) port to see the stream itself |
+| "No Join/Leave seen" chip | The PC is on a normal port of a snooping switch. Mirror the uplink to the querier (or the devices' ports) to this PC's port |
 | Only this PC's traffic is visible | The port is not a mirror (SPAN) port, or the NIC is a virtual adapter |
 | No Join/Leave appear for devices | Joins are only sent when a device starts or refreshes a subscription (typically after a Query); wait for the next Query (about 125 s) or reconnect a device |
 | The screen shows "Disconnected (reconnecting...)" | The app is not running or a different instance uses port 8765; start the app (or close the other one) |

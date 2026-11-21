@@ -142,6 +142,62 @@ class TestQuerierMonitor(unittest.TestCase):
         self.assertEqual(self.mon.status()["state"], "unknown")
 
 
+class TestReportVisibility(unittest.TestCase):
+    """Queryは届くのに他端末のReportが届かない(=Snoopingに絞られた通常ポート)ことの診断。"""
+
+    QUERIER = ("192.168.1.254", "aa:aa:aa:aa:aa:aa")
+    OWN = ("192.168.1.5", "02:00:00:00:00:05")
+
+    def setUp(self) -> None:
+        self.now = 0.0
+        self.mon = QuerierMonitor(timeout_s=260, clock=lambda: self.now, report_grace_s=30)
+        self.mon.set_own_addresses([self.OWN[0]], self.OWN[1])
+
+    def hidden(self) -> bool:
+        return self.mon.status()["reports_hidden"]
+
+    def test_no_hint_before_any_query(self) -> None:
+        """Queryが無ければ判断材料が無いので出さない(クエリア不在はクエリア表示が警告する)。"""
+        self.now = 1000
+        self.assertFalse(self.hidden())
+
+    def test_hint_only_after_grace_period(self) -> None:
+        """General Query後、Max Response Time(10秒)を見込んだ猶予の間は出さず、過ぎたら出す。"""
+        self.mon.observe_query(*self.QUERIER, 2)
+        self.now = 29.9
+        self.assertFalse(self.hidden())
+        self.now = 30
+        self.assertTrue(self.hidden())
+
+    def test_report_from_other_device_clears_hint(self) -> None:
+        self.mon.observe_query(*self.QUERIER, 2)
+        self.now = 40
+        self.mon.observe_report("192.168.1.51", "00:aa:bb:cc:dd:ee")
+        self.assertFalse(self.hidden())
+        self.assertEqual(self.mon.status()["reports_seen"], 1)
+
+    def test_own_reports_are_not_counted(self) -> None:
+        """このPC自身のReport(OSのmDNS参加など)はIPでもMACでも除外する(大文字小文字を問わない)。"""
+        self.mon.observe_query(*self.QUERIER, 2)
+        self.mon.observe_report(self.OWN[0], "")
+        self.mon.observe_report("0.0.0.0", self.OWN[1].upper())
+        self.now = 30
+        self.assertTrue(self.hidden())
+
+    def test_group_specific_query_does_not_start_grace(self) -> None:
+        """Group-Specific Queryは全端末に応答を促さないため、診断の起点にしない。"""
+        self.mon.observe_query(*self.QUERIER, 2, general=False)
+        self.now = 1000
+        self.assertFalse(self.hidden())
+
+    def test_reset_clears_diagnosis(self) -> None:
+        self.mon.observe_query(*self.QUERIER, 2)
+        self.now = 30
+        self.assertTrue(self.hidden())
+        self.mon.reset()
+        self.assertFalse(self.hidden())
+
+
 class TestPcapExport(unittest.TestCase):
     """PCAP→CSV: 時刻・機器名の2パス解決・データ面集計・絞り込み。"""
 

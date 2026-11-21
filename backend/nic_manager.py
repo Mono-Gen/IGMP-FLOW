@@ -8,7 +8,7 @@ import sys
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
-    from scapy.all import get_if_list
+    from scapy.all import get_if_addr, get_if_hwaddr, get_if_list
     from scapy.arch import get_windows_if_list
     SCAPY_AVAILABLE = True
 except ImportError:
@@ -53,6 +53,35 @@ def list_nics(active_interface: Optional[str]) -> Tuple[List[NicInfo], int]:
             nics.append({"index": i + 1, "name": name, "ip": "DHCP / dynamic", "guid": name})
 
     return nics, active_idx
+
+
+def own_addresses(interface: Optional[str]) -> Tuple[List[str], str]:
+    """キャプチャNIC自身のIPv4アドレスとMACアドレスを返します。
+
+    このPC自身が送るIGMP Report(OSのmDNS/SSDP参加など)を、他の端末のReportと区別するために使う。
+    取得できない場合は空を返す(診断が出にくくなるだけで、キャプチャには影響しない)。
+
+    Args:
+        interface (Optional[str]): キャプチャNICの識別名。
+
+    Returns:
+        Tuple[List[str], str]: (IPv4アドレスのリスト, MACアドレス)。
+    """
+    if not SCAPY_AVAILABLE or not interface:
+        return [], ""
+    ips: List[str] = []
+    mac = ""
+    try:
+        ip = get_if_addr(interface)
+        if ip and ip != "0.0.0.0":
+            ips.append(ip)
+    except Exception as e:  # NICが消えた等。診断用の補助情報なので処理は続ける
+        print(f"[警告] NICのIPアドレスを取得できません: {e}", file=sys.stderr)
+    try:
+        mac = get_if_hwaddr(interface) or ""
+    except Exception as e:
+        print(f"[警告] NICのMACアドレスを取得できません: {e}", file=sys.stderr)
+    return ips, mac
 
 
 def choose_default_nic(nics: List[NicInfo]) -> str:

@@ -89,10 +89,11 @@
             <i class="fa-solid fa-power-off"></i> Exit
         </button>
         <span class="shutdown-note" title="The app keeps running after the browser is closed. To stop it, use the Exit button or end IGMP-FLOW in Task Manager.">ⓘ Monitoring continues even if you close the browser</span>
+        <span class="status-chip passive" id="passive-status" title="IGMP-FLOW only listens: this PC never sends an IGMP Join. With IGMP snooping, a switch forwards a group's stream only to ports that joined it, so stream data appears here only on a mirror (SPAN) port, on a switch that floods multicast, or when another app on this PC joined the group. A group shown without stream data is not proof that nothing is flowing. Likewise, other devices' Joins and Leaves (IGMP Reports) reach only the switch's router (querier) port, so they are visible here only on a mirror (SPAN) port."><i class="fa-solid fa-circle-info" aria-hidden="true"></i> Passive: this PC does not join groups</span>
         <span class="status-chip" id="querier-status" title="IGMP querier status">Querier: checking</span>
+        <span class="status-chip warn passive-hint" id="report-visibility" hidden title="IGMP Queries arrive, but no Join/Leave (IGMP Report) from any other device has been seen. With IGMP snooping, a switch forwards Reports only to its router (querier) port, so a normal port does not see them. Connect this PC to a mirror (SPAN) port of the uplink to the querier to see Joins and Leaves. If no device on the network has joined a group, this message also appears.">⚠ No Join/Leave seen: this port may not be a mirror (SPAN) port</span>
         <span class="status-chip" id="ptp-status" title="PTP anomaly detection (lost Announce, multiple grandmasters, interval mismatch)">PTP: ---</span>
         <span class="status-chip" id="capture-status" title="PCAP recording status">PCAP: ---</span>
-        <span class="status-chip passive" id="passive-status" title="IGMP-FLOW only listens: this PC never sends an IGMP Join. With IGMP snooping, a switch forwards a group's stream only to ports that joined it, so stream data appears here only on a mirror (SPAN) port, on a switch that floods multicast, or when another app on this PC joined the group. A group shown without stream data is not proof that nothing is flowing.">ⓘ Passive: this PC does not join groups</span>
         <span class="status-chip" id="ui-notice" hidden></span>
     </section>
 

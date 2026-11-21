@@ -19,6 +19,11 @@ from backend.paths import data_dir
 # スイッチの標準的なグループメンバーシップインターバル（260秒）を基準とする
 QUERIER_TIMEOUT_SECONDS: Final[int] = 260
 
+# 「Reportが見えていない」診断を出すまでの猶予（秒）。General Query を観測してからこの時間内に
+# 他の端末のReportを1件も観測しなければ、ミラーポートではない可能性を知らせる。
+# IGMP の既定 Max Response Time（10秒、RFC 2236 / RFC 3376）に、遅延と取りこぼしの余裕を足した値
+REPORT_VISIBILITY_GRACE_SECONDS: Final[int] = 30
+
 # 状態ログのデフォルト保存ディレクトリ（相対パス）
 DEFAULT_LOG_DIR: Final[str] = data_dir("logs")
 

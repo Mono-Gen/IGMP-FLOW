@@ -137,3 +137,39 @@ class TestWsCommands(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestReportVisibilityWiring(unittest.TestCase):
+    """パケット処理からクエリア監視へ、Query(General/Group-Specific)とReportが正しく渡ること。"""
+
+    def setUp(self) -> None:
+        from backend.tests.mock_packet_generator import create_igmp_join_v2, create_igmp_query
+        self.join = create_igmp_join_v2
+        self.query = create_igmp_query
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.app = FakeSniffApp(log_dir=os.path.join(self._tmp.name, "logs"), capture_dir=os.path.join(self._tmp.name, "cap"),
+                                enable_pcap=False)
+        self.now = 0.0
+        self.app.querier_monitor._clock = lambda: self.now
+        self.app.querier_monitor.reset()
+        self.app.querier_monitor.set_own_addresses(["192.168.1.5"], "02:00:00:00:00:05")
+
+    def test_join_from_other_device_is_counted(self) -> None:
+        self.app._packet_callback(self.query("192.168.1.254"))
+        self.app._packet_callback(self.join("192.168.1.51", "239.67.1.1"))
+        self.now = 100
+        st = self.app.querier_monitor.status()
+        self.assertEqual(st["reports_seen"], 1)
+        self.assertFalse(st["reports_hidden"])
+
+    def test_only_own_join_leaves_hint_on(self) -> None:
+        self.app._packet_callback(self.query("192.168.1.254"))
+        self.app._packet_callback(self.join("192.168.1.5", "224.0.0.251"))
+        self.now = 100
+        self.assertTrue(self.app.querier_monitor.status()["reports_hidden"])
+
+    def test_group_specific_query_alone_gives_no_hint(self) -> None:
+        self.app._packet_callback(self.query("192.168.1.254", "239.67.1.1"))
+        self.now = 100
+        self.assertFalse(self.app.querier_monitor.status()["reports_hidden"])
