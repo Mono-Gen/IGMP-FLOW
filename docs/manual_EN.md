@@ -82,6 +82,10 @@ Try the UI without any hardware: `python scripts/demo_simulator.py` replays a sa
 - **PTP status**: for each clock and message type, the *measured* interval and the interval the clock *declares*, plus grandmaster
   ID and priorities. Warnings appear for a lost Announce, several grandmasters in one domain, and interval mismatches.
 - **Stream stats**: audio streams (Dante audio, AES67 audio, other multicast) as packets/s and bit/s, refreshed every second.
+  Only streams that reach this port are listed. IGMP-FLOW never joins a group (see the *Passive* chip at the top), so with IGMP
+  snooping a stream is visible only on a mirror (SPAN) port or a switch that floods multicast.
+- **Group colour on the map**: green = stream data seen on this port in the last few seconds; grey = not seen on this port.
+  Grey is not an error and does not mean the stream has stopped.
 
 ## 4. Typical tasks
 
@@ -121,6 +125,7 @@ Command line options of the app: `-i/--interface`, `--interactive`, `-p/--port`,
 |---|---|
 | "Npcap is not installed" at start | Install Npcap (section 1.2) and restart |
 | NIC list empty, or nothing is captured | Run as administrator; check Npcap is installed; select the NIC connected to the mirror port; confirm the mirror is configured on the switch |
+| A group is on the map but grey / missing from Stream stats | Normal on a non-mirror port with IGMP snooping: IGMP-FLOW does not join, so the switch does not forward the stream here. Use a mirror (SPAN) port to see the stream itself |
 | Only this PC's traffic is visible | The port is not a mirror (SPAN) port, or the NIC is a virtual adapter |
 | No Join/Leave appear for devices | Joins are only sent when a device starts or refreshes a subscription (typically after a Query); wait for the next Query (about 125 s) or reconnect a device |
 | The screen shows "Disconnected (reconnecting...)" | The app is not running or a different instance uses port 8765; start the app (or close the other one) |

@@ -233,6 +233,53 @@ function cleanupGroupNodes() {
     });
 }
 
+// ------------------------------------------------------------------------------
+// グループごとのデータ面観測状態
+// このPCはJoinしないため、Snooping環境ではストリームがこのポートに届かないのが正常。
+// 「流れていない」と誤解させないよう、「このポートで観測したか」だけを区別して表示する。
+// ------------------------------------------------------------------------------
+// 集計は1秒間隔(UI_AGGREGATE_INTERVAL_SECONDS)。数回の取りこぼしで表示が揺れないよう余裕を持たせる
+const GROUP_DATA_STALE_MS = 5000;
+const groupDataLastSeen = new Map(); // group_ip -> 最後にデータ面パケットを観測した時刻(ms)
+const groupBaseTitle = new Map();    // group_ip -> 観測状態を付ける前のツールチップ本文
+const GROUP_COLOR_NO_DATA = "#64748b"; // 未観測は異常ではないので赤・黄ではなく灰色にする
+
+function markGroupDataSeen(groupIp) {
+    if (!groupIp) return;
+    groupDataLastSeen.set(groupIp, Date.now());
+    applyGroupDataState(groupIp);
+}
+
+/** グループノードのツールチップとアイコン色を、データ面の観測状態に合わせて更新する。 */
+function applyGroupDataState(groupIp) {
+    const node = nodes.get(groupIp);
+    if (!node || node.customType !== "group") return;
+    const last = groupDataLastSeen.get(groupIp);
+    const age = last === undefined ? Infinity : Date.now() - last;
+    const seen = age <= GROUP_DATA_STALE_MS;
+    const state = seen ? STR.groupDataSeen(Math.floor(age / 1000)) : STR.groupDataNotSeen;
+    const base = groupBaseTitle.get(groupIp) || STR.groupTitle(groupIp);
+    nodes.update({
+        id: groupIp,
+        title: tooltipElement(`${base}\n${state}`),
+        icon: { ...ICONS.group, color: seen ? ICONS.group.color : GROUP_COLOR_NO_DATA }
+    });
+}
+
+/** グループノードを追加・更新し、観測状態を付与する。 */
+function updateGroupNode(groupIp, title) {
+    groupBaseTitle.set(groupIp, title);
+    updateNode(groupIp, getMulticastGroupLabel(groupIp), "group", title);
+    applyGroupDataState(groupIp);
+}
+
+function refreshAllGroupDataStates() {
+    nodes.get({ filter: (n) => n.customType === "group" }).forEach(n => applyGroupDataState(n.id));
+}
+
+// flow_stats はフローがある時しか届かないため、途絶したグループを定期的に「未観測」へ戻す
+setInterval(refreshAllGroupDataStates, 1000);
+
 // ==============================================================================
 // 4. バックエンドから届くイベントのリアルタイム処理 (メイン)
 // ==============================================================================
@@ -258,8 +305,7 @@ function handleNetworkEvent(data) {
             updateNode(srcIp, deviceName, "host", subtitle);
             
             // グループノードを追加（すでにクエリアが存在すれば繋ぐ）
-            const groupNodeLabel = getMulticastGroupLabel(groupIp);
-            updateNode(groupIp, groupNodeLabel, "group", STR.groupTitle(groupIp));
+            updateGroupNode(groupIp, STR.groupTitle(groupIp));
             
             // エッジを繋ぐ (端末 ➔ グループ)
             const edgeId = `${srcIp}_to_${groupIp}`;
@@ -290,7 +336,9 @@ function handleNetworkEvent(data) {
         updateNode(srcIp, `${deviceName}\n${STR.clockTag(ptpTag)}`, "sync", subtitle);
         
         // 共通同期グループにエッジを紐付け
-        updateNode(groupIp, getMulticastGroupLabel(groupIp), "group", STR.ptpGroupTitle(groupIp));
+        // PTPメッセージ自体がこのグループ宛てのデータ面パケットなので「観測あり」とする
+        updateGroupNode(groupIp, STR.ptpGroupTitle(groupIp));
+        markGroupDataSeen(groupIp);
         addEdge(srcIp, groupIp, `${srcIp}_to_${groupIp}`);
     }
 
@@ -451,6 +499,8 @@ function renderFlowStats(flows) {
         // 音声を流している送信元をトポロジ上にも端末として出す
         updateNode(f.src_ip, f.resolved_name || f.src_ip, "host", `IP: ${f.src_ip}\nMAC: ${f.src_mac}`);
     });
+    // 表示上限(50件)に関係なく、届いた全フローでグループの観測状態を更新する
+    flows.forEach(f => markGroupDataSeen(f.group_ip));
 }
 
 // ------------------------------------------------------------------------------
@@ -858,6 +908,8 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("btn-reset").addEventListener("click", () => {
         nodes.clear();
         edges.clear();
+        groupDataLastSeen.clear();
+        groupBaseTitle.clear();
         clearLogView();
         ["flow-list-body", "ptp-list-body", "ptp-alerts"].forEach(id => {
             const el = document.getElementById(id);

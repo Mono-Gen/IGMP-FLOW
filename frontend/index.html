@@ -92,6 +92,7 @@
         <span class="status-chip" id="querier-status" title="IGMP querier status">Querier: checking</span>
         <span class="status-chip" id="ptp-status" title="PTP anomaly detection (lost Announce, multiple grandmasters, interval mismatch)">PTP: ---</span>
         <span class="status-chip" id="capture-status" title="PCAP recording status">PCAP: ---</span>
+        <span class="status-chip passive" id="passive-status" title="IGMP-FLOW only listens: this PC never sends an IGMP Join. With IGMP snooping, a switch forwards a group's stream only to ports that joined it, so stream data appears here only on a mirror (SPAN) port, on a switch that floods multicast, or when another app on this PC joined the group. A group shown without stream data is not proof that nothing is flowing.">ⓘ Passive: this PC does not join groups</span>
         <span class="status-chip" id="ui-notice" hidden></span>
     </section>
 
@@ -176,6 +177,7 @@
 
             <!-- データ面(音声等)の1秒集計 -->
             <div class="tab-pane" id="pane-flow" hidden>
+                <p class="pane-note">This PC does not join any group. A stream missing here means it did not reach <em>this port</em>, not that it is not flowing: with IGMP snooping, streams reach only joined ports or a mirror (SPAN) port.</p>
                 <table class="log-table">
                     <thead>
                         <tr>

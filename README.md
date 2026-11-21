@@ -45,6 +45,10 @@ Step-by-step installation, screen guide and troubleshooting: **[User manual](doc
 To see IGMP traffic from other devices, connect the capture NIC to a **mirror (SPAN) port** of the switch.
 Virtual adapters (for example Hyper-V) only see the host's own traffic.
 
+IGMP-FLOW only listens and **never joins a multicast group itself**. On a switch with IGMP snooping, a stream is forwarded only
+to ports that joined it, so a group can appear on the map with no stream data at this port. That is normal and does not mean
+the stream is not flowing. Such groups are drawn in grey, and their tooltip says whether stream data was seen on this port.
+
 ## Quick start
 
 From source (run in an elevated terminal):

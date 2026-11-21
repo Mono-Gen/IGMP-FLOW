@@ -503,3 +503,7 @@ body::after {
 .tab-pane[hidden] { display: none; }
 .main-container.log-maximized .map-panel, .main-container.log-maximized .splitter { display: none; }
 .main-container.log-maximized .log-panel { flex: 1 1 auto; }
+
+/* パッシブ監視の注記。警告ではなく常設の説明なので控えめな色にする */
+.status-chip.passive { background: rgba(148, 163, 184, 0.15); color: #cbd5e1; cursor: help; }
+.pane-note { margin: 4px 8px 6px; font-size: 12px; color: #94a3b8; }

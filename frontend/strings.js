@@ -29,6 +29,9 @@ const STR = {
     clockTag: (ptp) => `[Clock - ${ptp}]`,
     groupTitle: (ip) => `Multicast group IP: ${ip}`,
     ptpGroupTitle: (ip) => `PTP multicast IP: ${ip}`,
+    // Data-plane observation state of a group (this PC never joins, so "not seen" is not "not flowing")
+    groupDataSeen: (sec) => `Stream data: seen on this port (${sec}s ago)`,
+    groupDataNotSeen: "Stream data: not seen on this port.\nThis PC does not join groups; with IGMP snooping the stream\nreaches only joined ports or a mirror (SPAN) port.\nThis does not mean the stream is not flowing.",
 
     // Connection
     connected: "Live monitoring (connected)",
