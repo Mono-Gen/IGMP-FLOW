@@ -97,6 +97,8 @@ Try the UI without any hardware: `python scripts/demo_simulator.py` replays a sa
 - **Is there an IGMP querier?** Check the *Querier* chip. "No querier!" means IGMP snooping on the switches may fail; "Multiple
   queriers" shows all of them and which one should win (the lowest IP). Query version (v1/v2/v3), robustness and interval are
   shown in the log detail and CSV.
+- **Am I seeing everything?** Check that the yellow *No Join/Leave seen* chip is not shown and that the groups you care about are
+  green. If not, the PC is probably on a normal port of a snooping switch: move it to a mirror (SPAN) port (see section 1).
 - **Is the clock healthy?** Open *PTP status*. Dante uses PTPv1; AES67/ST 2110 use PTPv2. Both can coexist. Check that one grandmaster
   announces per domain and that measured intervals match the declared ones.
 - **Find unwanted traffic:** tick only *SSDP*, *LLMNR* and *Other multicast* to see office-network or unknown multicast on the audio network.

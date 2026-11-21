@@ -21,6 +21,8 @@ Generated from the built-in demo (`python scripts/demo_simulator.py`); all names
 - **IGMP analysis**: IGMPv1/v2/v3. IGMPv3 Reports are expanded per Group Record (include/exclude, sources).
   Query version (v1/v2/v3), max response time, robustness (QRV) and QQIC are shown.
 - **Querier monitor**: detects a missing querier and multiple queriers (the lowest IP should win the election).
+- **Visibility check**: IGMP-FLOW never joins a group. It warns when Queries arrive but no other device's Join/Leave is
+  seen (the port is probably not a mirror port), and greys out groups whose stream data does not reach this port.
 - **PTP (v1 / v2) monitor**: per-clock message intervals (measured vs. declared), grandmaster ID, priorities and
   clock class. Warns on lost Announce, multiple grandmasters and interval mismatch.
 - **Protocol names**: mDNS, SSDP, SAP, LLMNR, Dante ConMon, Dante audio, AES67 audio, other multicast.

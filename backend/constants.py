@@ -28,7 +28,7 @@ REPORT_VISIBILITY_GRACE_SECONDS: Final[int] = 30
 DEFAULT_LOG_DIR: Final[str] = data_dir("logs")
 
 # アプリのバージョン(リリース成果物の名前と --version 表示に使う。セマンティックバージョニング)
-APP_VERSION: Final[str] = "0.1.0"
+APP_VERSION: Final[str] = "0.2.0"
 
 # Npcap公式ダウンロードURL
 NPCAP_DOWNLOAD_URL: Final[str] = "https://nmap.org/npcap/"
