@@ -390,6 +390,8 @@ header {
     border-radius: 12px;
     padding: 14px 18px;
     width: 220px;
+    max-height: calc(100% - 32px);
+    overflow-y: auto;
     box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
     z-index: 5;
     pointer-events: auto;
@@ -446,6 +448,32 @@ header {
     background: rgba(245, 158, 11, 0.15); /* PTP用に暖色系 */
     color: #f59e0b;
     border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+/* グループの種類ごとの凡例(app.js の GROUP_KIND_ICONS と同じ色) */
+.icon-sacn {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.icon-dante {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.icon-aes67 {
+    background: rgba(236, 72, 153, 0.15);
+    color: #ec4899;
+    border: 1px solid rgba(236, 72, 153, 0.3);
+}
+
+/* 未確定(疑問符)は Join だけで判断するのでデータ未観測。図では灰色になるので凡例も灰色にする */
+.icon-unsure {
+    background: rgba(100, 116, 139, 0.15);
+    color: #64748b;
+    border: 1px solid rgba(100, 116, 139, 0.3);
 }
 
 .icon-device {

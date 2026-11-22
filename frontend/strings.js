@@ -7,18 +7,55 @@
  */
 const STR = {
     // Known multicast groups shown on topology group nodes
+    // Keep this list in step with "Known multicast groups" in docs/manual_EN.md and manual_JP.md
+    // (backend/tests/test_known_groups_doc.py checks it).
     multicastLabels: {
         "224.0.1.129": { tag: "PTP clock sync (Dante/AES67)", icon: "⏰" },
+        "224.0.1.130": { tag: "PTP clock sync (alternate domain)", icon: "⏰" },
+        "224.0.1.131": { tag: "PTP clock sync (alternate domain)", icon: "⏰" },
+        "224.0.1.132": { tag: "PTP clock sync (alternate domain)", icon: "⏰" },
+        "224.0.0.107": { tag: "PTP peer delay", icon: "⏰" },
+        "239.254.3.3": { tag: "Dante PTP logging (if enabled)", icon: "⏰" },
+        "224.0.0.230": { tag: "Dante control & monitoring", icon: "👥" },
+        "224.0.0.231": { tag: "Dante control & monitoring", icon: "👥" },
+        "224.0.0.232": { tag: "Dante control & monitoring", icon: "👥" },
+        "224.0.0.233": { tag: "Dante control & monitoring", icon: "👥" },
         "224.0.0.251": { tag: "mDNS (Bonjour)", icon: "👥" },
+        "239.255.255.255": { tag: "SAP (AES67 session announcements)", icon: "👥" },
         "239.255.255.250": { tag: "SSDP (UPnP)", icon: "👥" },
         "224.0.0.252": { tag: "LLMNR (Windows)", icon: "👥" },
         "224.0.0.1": { tag: "All Hosts (general query)", icon: "👥" },
         "224.0.0.2": { tag: "All Routers", icon: "👥" },
         "224.0.0.22": { tag: "IGMPv3 Reports", icon: "👥" }
     },
-    groupDante: "Dante audio/control",
+    // Group kinds. 239.255.x.x is used by both sACN (lighting) and Dante audio; an IGMP Join carries
+    // no port, so until stream data is seen the label shows both possibilities.
+    groupDante: "Dante audio",
+    groupAes67: "AES67 audio",
+    groupSacn: (u) => `sACN universe ${u}`,
+    groupSacnOrDante: (u) => `sACN universe ${u} or Dante`,
     groupPrivate: "Private stream",
     groupGeneric: "Group",
+
+    // Summary nodes that stand for many groups of one address family
+    familySacnDante: "sACN / Dante (239.255.x.x)",
+    familyLinkLocal: "Link-local (224.0.0.x)",
+    family239255Other: "239.255.x.x outside sACN/Dante (SSDP, SAP, ...)",
+    familyLabel: (name, n, seen) => `${name}\n${n} groups` + (seen ? ` (${seen} with data)` : ""),
+    familyTitle: (name, n, seen, hosts, range) =>
+        `${name}: ${n} groups (${range})\n` +
+        `Joined by ${hosts} device(s). Stream data seen on this port: ${seen} group(s).\n` +
+        `Shown as one node because there are many groups. Double-click to show each group.`,
+    familyCollapseHint: "Double-click to group these again.",
+    // Summary nodes that stand for many devices in one /24 subnet
+    subnetLabel: (subnet, n) => `${subnet}\n${n} devices`,
+    subnetTitle: (subnet, n) =>
+        `${n} devices in ${subnet}\n` +
+        `Shown as one node because there are many devices. Double-click to show each device.\n` +
+        `Queriers and PTP clocks are always shown individually.`,
+    groupSummary: (n, f) => `${n} groups in ${f} summary node(s)`,
+    hostSummary: (n, f) => `${n} devices in ${f} summary node(s)`,
+    summaryExpandHint: "double-click one to expand",
 
     // Topology nodes
     switchNoIp: "Switch without IP\n[Querier]",
@@ -30,7 +67,7 @@ const STR = {
     groupTitle: (ip) => `Multicast group IP: ${ip}`,
     ptpGroupTitle: (ip) => `PTP multicast IP: ${ip}`,
     // Data-plane observation state of a group (this PC never joins, so "not seen" is not "not flowing")
-    groupDataSeen: (sec) => `Stream data: seen on this port (${sec}s ago)`,
+    groupDataSeen: "Stream data: seen on this port in the last few seconds",
     groupDataNotSeen: "Stream data: not seen on this port.\nThis PC does not join groups; with IGMP snooping the stream\nreaches only joined ports or a mirror (SPAN) port.\nThis does not mean the stream is not flowing.",
 
     // Connection

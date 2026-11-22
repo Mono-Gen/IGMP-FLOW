@@ -62,6 +62,10 @@ from backend.constants import (
     PROTOCOL_TAG_MAP,
     DANTE_CONMON_IPS,
     DANTE_CONMON_PORTS,
+    DANTE_AUDIO_PORT,
+    SACN_PORT,
+    SACN_UNIVERSE_MAX,
+    SACN_UNIVERSE_MIN,
     PLANE_CONTROL,
     PLANE_DATA,
     IGMP_TYPE_QUERY,
@@ -123,6 +127,27 @@ def _decode_igmpv3_time_code(code: int) -> int:
     exp = (code >> 4) & 0x07
     mant = code & 0x0F
     return (mant | 0x10) << (exp + 3)
+
+
+def sacn_universe(ip: str) -> Optional[int]:
+    """sACN のマルチキャスト宛先IPからユニバース番号を求めます。
+
+    E1.31 ではユニバースNを 239.255.(N>>8).(N&0xFF) へ送るため、下位2オクテットがユニバース番号になる。
+
+    Args:
+        ip (str): 宛先IPv4アドレス。
+
+    Returns:
+        Optional[int]: 有効範囲(1〜63999)のユニバース番号。sACN の宛先として有り得ない場合は None。
+    """
+    parts = ip.split(".")
+    if len(parts) != 4 or parts[0] != "239" or parts[1] != "255":
+        return None
+    try:
+        universe = (int(parts[2]) << 8) | int(parts[3])
+    except ValueError:
+        return None
+    return universe if SACN_UNIVERSE_MIN <= universe <= SACN_UNIVERSE_MAX else None
 
 
 def _is_multicast_ip(ip: str) -> bool:
@@ -553,15 +578,25 @@ class PacketAnalyzer:
                     "description": "Control traffic for Dante routing and device monitoring.",
                 }]
 
-            # B-4. Dante音声ストリーム (一般的に 239.255.0.0/16 範囲)
-            if dst_ip.startswith("239.255."):
+            # B-4. sACN (E1.31 照明制御)。Dante音声と同じ 239.255.0.0/16 を使うため、ポートで先に見分ける
+            if dport == SACN_PORT and dst_ip.startswith("239.255."):
+                universe = sacn_universe(dst_ip)
+                label = f"sACN universe {universe}" if universe is not None else "sACN"
+                return [{
+                    "proto": "sACN", "event": "sACN data", "event_code": "sacn", "group_ip": dst_ip,
+                    "tag": label, "plane": PLANE_DATA, "universe": universe,
+                    "description": "Lighting control data (ANSI E1.31 / streaming ACN).",
+                }]
+
+            # B-5. Dante音声ストリーム (239.255.0.0/16 宛、UDP 4321)。他ポートの 239.255.x.x は未分類として扱う
+            if dport == DANTE_AUDIO_PORT and dst_ip.startswith("239.255."):
                 return [{
                     "proto": "Dante-Audio", "event": "Audio stream", "event_code": "dante_audio", "group_ip": dst_ip,
                     "tag": "Dante audio stream", "plane": PLANE_DATA,
                     "description": "Dante multicast audio payload.",
                 }]
 
-            # B-5. AES67音声ストリーム (UDP 5004ポート)
+            # B-6. AES67音声ストリーム (UDP 5004ポート)
             if dport == 5004 and dst_ip.startswith("239."):
                 return [{
                     "proto": "AES67-Audio", "event": "AES67 audio stream", "event_code": "aes67_audio", "group_ip": dst_ip,

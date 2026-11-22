@@ -55,7 +55,7 @@ Npcap のインストール方法によっては（例：「Restrict Npcap drive
 
 ### 3.1 上部バー
 
-- **プロトコルのチェック**（IGMP、PTPv1、PTPv2、mDNS、SSDP、SAP、LLMNR、Dante ConMon、Dante audio、AES67 audio、Other multicast）：
+- **プロトコルのチェック**（IGMP、PTPv1、PTPv2、mDNS、SSDP、SAP、LLMNR、Dante ConMon、Dante audio、sACN、AES67 audio、Other multicast）：
   画面に送る対象を選びます。絞り込みはプログラム側で行い、**全パケットは引き続き PCAP に記録されます**。
 - **PTP types**：PTP のメッセージ種別を絞ります（例：Announce だけ）。
 - **絞り込み欄**：IP、MAC、グループ、機器名に、入力した文字を含む通信だけを表示します。
@@ -81,18 +81,25 @@ Npcap のインストール方法によっては（例：「Restrict Npcap drive
 - **Log**：イベントごとに 1 行（時刻、プロトコル、イベント、ホスト、グループ）。**Pause log** は、このログへの追加だけを止めます。
 - **PTP status**：クロックとメッセージ種別ごとに、*実測*の間隔と、クロックが*宣言*する間隔、グランドマスター ID、プライオリティを表示します。
   Announce の途絶、同じドメインでの複数のグランドマスター、間隔の不一致を警告します。
-- **Stream stats**：音声ストリーム（Dante audio、AES67 audio、その他のマルチキャスト）を、パケット/秒と bit/秒で、1 秒ごとに更新します。
+- **Stream stats**：ストリームのデータ（Dante audio、sACN、AES67 audio、その他のマルチキャスト）を、パケット/秒と bit/秒で、1 秒ごとに更新します。
   表示されるのは、このポートに届いたストリームだけです。IGMP-FLOW は自分からグループに Join しません（上部の *Passive* 表示）。
   そのため IGMP Snooping 環境では、ミラー（SPAN）ポートか、マルチキャストをフラッディングするスイッチでないとストリームは見えません。
-- **図のグループの色**：緑は、直近数秒にこのポートでストリームのデータを観測したグループです。灰色は、このポートでは観測していないグループです。
+- **図のグループの色**：色付きは、直近数秒にこのポートでストリームのデータを観測したグループです。灰色は、このポートでは観測していないグループです。
   灰色は異常ではなく、ストリームが止まったという意味でもありません。
+- **グループのアイコン**：電球は sACN（照明）、スピーカーは Dante audio、波形は AES67 audio です。sACN と Dante はどちらも
+  239.255.x.x を使い、IGMP の Join にはポート番号が含まれないため、239.255.x.x のグループは、このポートでデータを観測するまで
+  疑問符（「sACN universe N or Dante」）で表示します。
+- **まとめノード**：グループが 40 個を超えると、同じアドレス範囲（例: 239.255.x.x のうち sACN/Dante の範囲）のグループを 1 つのノードにまとめ、
+  グループの数とデータを観測した数を表示します。機器が 30 台を超えると、同じ /24 サブネットの機器を 1 つのノードにまとめます。
+  クエリアと PTP クロックは常に個別に表示します。まとめノードをダブルクリックすると中身を表示し、表示されたノードを
+  ダブルクリックすると、もう一度まとめます。まとめている数は状態バーに表示します。
 
 ## 4. よくある使い方
 
 - **誰がどのグループに参加している？** 図を見るか、ログを *IGMP* で絞り、グループのアドレスを絞り込み欄に入力します。
 - **IGMP クエリアはいる？** *Querier* チップを確認します。「No querier!」はスイッチの IGMP スヌーピングが働かない恐れ、「Multiple queriers」は
   全クエリアと、本来選ばれるべきもの（最小の IP）を表示します。Query のバージョン（v1/v2/v3）、ロバストネス、間隔は、ログの詳細と CSV で見られます。
-- **全部見えている？** 黄色の *No Join/Leave seen* チップが出ていないこと、気になるグループが緑で表示されていることを確認します。
+- **全部見えている？** 黄色の *No Join/Leave seen* チップが出ていないこと、気になるグループが灰色ではなく色付きで表示されていることを確認します。
   そうでなければ、PC が IGMP スヌーピング有効スイッチの通常ポートにつながっている可能性が高いので、ミラー（SPAN）ポートにつなぎ替えます（1 章参照）。
 - **クロックは正常？** *PTP status* を開きます。Dante は PTPv1、AES67/ST 2110 は PTPv2 を使い、両方が共存できます。ドメインごとにグランドマスターが 1 台だけ
   Announce していること、実測間隔が宣言値と合っていることを確認してください。
@@ -125,6 +132,8 @@ python -m backend.pcap_export <file.pcap> -o out.csv --proto IGMP --proto PTPv2 
 |---|---|
 | 起動時に「Npcap がインストールされていません」 | Npcap をインストール（1.2 節）して、再起動する |
 | NIC の一覧が空、または何も取得されない | 管理者として実行する。Npcap の導入を確認する。ミラーポートにつないだ NIC を選ぶ。スイッチ側のミラー設定を確認する |
+| 図がラベルの塊になって読めない | 0.2.2 以降に更新する。グループや機器が多いとまとめノードで表示する |
+| 照明（sACN）のネットワークなのに「Dante」と表示される | 0.2.2 で修正。sACN と Dante を UDP ポートで見分ける。Join しか見えていないグループは「sACN universe N or Dante」と表示する |
 | グループが図に出ているのに灰色、または Stream stats に出ない | IGMP Snooping 環境でミラーではないポートなら正常。IGMP-FLOW は Join しないので、スイッチがこのポートへストリームを転送しない。ストリーム本体を見るにはミラー（SPAN）ポートを使う |
 | 「No Join/Leave seen」が表示される | PC が IGMP スヌーピング有効スイッチの通常ポートにつながっている。クエリアへのアップリンク（または機器のポート）を、この PC のポートへミラーする |
 | この PC 自身の通信しか見えない | そのポートがミラー（SPAN）ポートではない、または NIC が仮想アダプタ |
@@ -145,3 +154,38 @@ python -m backend.pcap_export <file.pcap> -o out.csv --proto IGMP --proto PTPv2 
 
 IGMP-FLOW は受動的で（自分からは送信しません）、`127.0.0.1` だけで待ち受け、他のウェブページからの接続を拒否し、ネットワーク由来のデータを信頼しません。
 ログイン機能はないため、ポート 8000/8765 を PC の外へ公開しないでください。詳細は README を参照してください。
+
+## 9. 既知のマルチキャストグループ
+
+IGMP-FLOW は次のアドレスに、図とログで名前を付けて表示します。見かけたアドレスを調べるときに使ってください。
+表に無いアドレスでも、異常とは限りません。同じ PC や機器で動いている別のソフト（照明・制御・AV 用のソフトなど）が、
+独自のグループに参加していることがあります。*出典* 列は、各行を確認した資料です。
+
+| アドレス | ポート（UDP） | プロトコル / 用途 | IGMP-FLOW での表示 | 出典 |
+|---|---|---|---|---|
+| 224.0.0.1 | – | IGMP：全ホスト（General Query の宛先） | All Hosts | IANA マルチキャスト登録簿 |
+| 224.0.0.2 | – | IGMP：全ルーター（IGMPv2 の Leave の宛先） | All Routers | IANA マルチキャスト登録簿 |
+| 224.0.0.22 | – | IGMPv3 のメンバーシップレポート | IGMPv3 Reports | IANA マルチキャスト登録簿 |
+| 224.0.0.107 | 319, 320 | PTP のピア遅延測定 | PTP peer delay | IANA マルチキャスト登録簿 |
+| 224.0.1.129 | 319, 320 | PTP のクロック同期（既定ドメイン。Dante は PTPv1、AES67 は PTPv2） | PTP clock sync | IANA、Audinate |
+| 224.0.1.130 – 224.0.1.132 | 319, 320 | PTP のクロック同期（その他のドメイン） | PTP clock sync (alternate domain) | IANA、Audinate |
+| 224.0.0.230 – 224.0.0.233 | 8700 – 8708 | Dante の制御と監視（ConMon） | Dante control & monitoring | Audinate |
+| 224.0.0.251 | 5353 | mDNS（Bonjour）：機器の発見。Dante Controller が使う | mDNS | IANA、Audinate |
+| 224.0.0.252 | 5355 | LLMNR（Windows の名前解決）。AV ネットワークには不要 | LLMNR | RFC 4795 |
+| 239.254.3.3 | 9998 | Dante の PTP ログ（有効にした場合のみ） | Dante PTP logging | Audinate |
+| 239.255.255.250 | 1900 | SSDP / UPnP の発見（オフィス機器、Windows） | SSDP | UPnP Device Architecture |
+| 239.255.255.255 | 9875 | SAP：AES67 のストリーム告知 | SAP | RFC 2974 |
+
+IGMP-FLOW がアドレスと**ポート**で見分ける範囲：
+
+| アドレス範囲 | ポート（UDP） | プロトコル / 用途 | IGMP-FLOW での表示 | 出典 |
+|---|---|---|---|---|
+| 239.255.0.0 – 239.255.249.255 | 5568 | sACN（ANSI E1.31）の照明データ。ユニバース N は 239.255.(N÷256).(N mod 256) | sACN universe N | ANSI E1.31（照明メーカーのマニュアル経由） |
+| 239.255.0.0/16 | 4321 | Dante のマルチキャスト音声・映像 | Dante audio | Audinate |
+| 239.x.x.x のいずれか | 5004 | AES67（RTP）音声。239.69.x.x がよく使われる既定値だが、機器ごとに変えられる | AES67 audio | AES67 対応メーカーの資料 |
+
+sACN と Dante はどちらも 239.255.x.x を使います。IGMP の Join にはポート番号が含まれないため、Join だけが見えている
+239.255.x.x のグループは、このポートでデータを観測するまで「sACN universe N or Dante」と表示します。
+
+出典：IANA *IPv4 Multicast Address Space Registry*、Audinate *Dante Information for Network Administrators*、
+RFC 2974（SAP）、RFC 4795（LLMNR）、UPnP Device Architecture（SSDP）、ANSI E1.31（sACN）。

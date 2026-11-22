@@ -53,6 +53,7 @@
             <label><input type="checkbox" value="LLMNR" checked> LLMNR</label>
             <label><input type="checkbox" value="Dante-ConMon" checked> Dante ConMon</label>
             <label><input type="checkbox" value="Dante-Audio" checked> Dante audio</label>
+            <label title="Lighting control (ANSI E1.31 / streaming ACN, UDP 5568)"><input type="checkbox" value="sACN" checked> sACN</label>
             <label><input type="checkbox" value="AES67-Audio" checked> AES67 audio</label>
             <label><input type="checkbox" value="Multicast-Other" checked> Other multicast</label>
         </div>
@@ -94,6 +95,7 @@
         <span class="status-chip warn passive-hint" id="report-visibility" hidden title="IGMP Queries arrive, but no Join/Leave (IGMP Report) from any other device has been seen. With IGMP snooping, a switch forwards Reports only to its router (querier) port, so a normal port does not see them. Connect this PC to a mirror (SPAN) port of the uplink to the querier to see Joins and Leaves. If no device on the network has joined a group, this message also appears.">⚠ No Join/Leave seen: this port may not be a mirror (SPAN) port</span>
         <span class="status-chip" id="ptp-status" title="PTP anomaly detection (lost Announce, multiple grandmasters, interval mismatch)">PTP: ---</span>
         <span class="status-chip" id="capture-status" title="PCAP recording status">PCAP: ---</span>
+        <span class="status-chip" id="group-summary" hidden title="When there are many multicast groups, groups in the same address range are shown as one summary node. Double-click a summary node to show each group; double-click one of those groups to put them back together."></span>
         <span class="status-chip" id="ui-notice" hidden></span>
     </section>
 
@@ -112,8 +114,32 @@
                     <span class="legend-label">Querier (liveness checks)</span>
                 </div>
                 <div class="legend-item">
-                    <span class="legend-icon icon-group"><i class="fa-solid fa-users"></i></span>
+                    <span class="legend-icon icon-group"><i class="fa-solid fa-tower-broadcast"></i></span>
                     <span class="legend-label">Multicast group (channel)</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-icon icon-sacn"><i class="fa-solid fa-lightbulb"></i></span>
+                    <span class="legend-label">sACN lighting (data seen)</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-icon icon-dante"><i class="fa-solid fa-volume-high"></i></span>
+                    <span class="legend-label">Dante audio (data seen)</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-icon icon-aes67"><i class="fa-solid fa-wave-square"></i></span>
+                    <span class="legend-label">AES67 audio (data seen)</span>
+                </div>
+                <div class="legend-item" title="239.255.x.x is used by both sACN and Dante. A Join carries no port number, so the kind is known only once stream data is seen.">
+                    <span class="legend-icon icon-unsure"><i class="fa-solid fa-circle-question"></i></span>
+                    <span class="legend-label">sACN or Dante (no data yet)</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-icon icon-group"><i class="fa-solid fa-layer-group"></i></span>
+                    <span class="legend-label">Many groups (double-click)</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-icon icon-device"><i class="fa-solid fa-server"></i></span>
+                    <span class="legend-label">Many devices (double-click)</span>
                 </div>
                 <div class="legend-item">
                     <span class="legend-icon icon-sync"><i class="fa-solid fa-clock"></i></span>

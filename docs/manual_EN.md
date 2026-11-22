@@ -56,7 +56,7 @@ Try the UI without any hardware: `python scripts/demo_simulator.py` replays a sa
 
 ### 3.1 Top bar
 
-- **Protocol check boxes** (IGMP, PTPv1, PTPv2, mDNS, SSDP, SAP, LLMNR, Dante ConMon, Dante audio, AES67 audio, Other multicast):
+- **Protocol check boxes** (IGMP, PTPv1, PTPv2, mDNS, SSDP, SAP, LLMNR, Dante ConMon, Dante audio, sACN, AES67 audio, Other multicast):
   choose what is sent to the screen. Filters are applied by the program itself; **everything is still recorded to PCAP**.
 - **PTP types**: show only some PTP message types (for example only Announce).
 - **Filter box**: shows only traffic whose IP, MAC, group or device name contains the text.
@@ -85,11 +85,19 @@ Try the UI without any hardware: `python scripts/demo_simulator.py` replays a sa
 - **Log**: one row per event (time, protocol, event, host, group). **Pause log** only stops adding rows to this view.
 - **PTP status**: for each clock and message type, the *measured* interval and the interval the clock *declares*, plus grandmaster
   ID and priorities. Warnings appear for a lost Announce, several grandmasters in one domain, and interval mismatches.
-- **Stream stats**: audio streams (Dante audio, AES67 audio, other multicast) as packets/s and bit/s, refreshed every second.
+- **Stream stats**: stream data (Dante audio, sACN, AES67 audio, other multicast) as packets/s and bit/s, refreshed every second.
   Only streams that reach this port are listed. IGMP-FLOW never joins a group (see the *Passive* chip at the top), so with IGMP
   snooping a stream is visible only on a mirror (SPAN) port or a switch that floods multicast.
-- **Group colour on the map**: green = stream data seen on this port in the last few seconds; grey = not seen on this port.
+- **Group colour on the map**: coloured = stream data seen on this port in the last few seconds; grey = not seen on this port.
   Grey is not an error and does not mean the stream has stopped.
+- **Group icons**: a light bulb is sACN (lighting), a speaker is Dante audio, a wave is AES67 audio. sACN and Dante both use
+  239.255.x.x, and an IGMP Join carries no port number, so a 239.255.x.x group shows a question mark
+  ("sACN universe N or Dante") until its stream data is seen on this port.
+- **Summary nodes**: when there are more than 40 groups, groups in the same address range (for example the sACN/Dante range of 239.255.x.x)
+  are drawn as one node that shows how many groups it holds and how many have stream data. When there are more than
+  30 devices, devices in the same /24 subnet are drawn as one node. Queriers and PTP clocks are always shown on their own.
+  Double-click a summary node to show what it contains; double-click one of those nodes to put them back together.
+  The status bar says how many groups and devices are summarised.
 
 ## 4. Typical tasks
 
@@ -98,7 +106,7 @@ Try the UI without any hardware: `python scripts/demo_simulator.py` replays a sa
   queriers" shows all of them and which one should win (the lowest IP). Query version (v1/v2/v3), robustness and interval are
   shown in the log detail and CSV.
 - **Am I seeing everything?** Check that the yellow *No Join/Leave seen* chip is not shown and that the groups you care about are
-  green. If not, the PC is probably on a normal port of a snooping switch: move it to a mirror (SPAN) port (see section 1).
+  coloured, not grey. If not, the PC is probably on a normal port of a snooping switch: move it to a mirror (SPAN) port (see section 1).
 - **Is the clock healthy?** Open *PTP status*. Dante uses PTPv1; AES67/ST 2110 use PTPv2. Both can coexist. Check that one grandmaster
   announces per domain and that measured intervals match the declared ones.
 - **Find unwanted traffic:** tick only *SSDP*, *LLMNR* and *Other multicast* to see office-network or unknown multicast on the audio network.
@@ -131,6 +139,8 @@ Command line options of the app: `-i/--interface`, `--interactive`, `-p/--port`,
 |---|---|
 | "Npcap is not installed" at start | Install Npcap (section 1.2) and restart |
 | NIC list empty, or nothing is captured | Run as administrator; check Npcap is installed; select the NIC connected to the mirror port; confirm the mirror is configured on the switch |
+| The map is a dense ball of labels | Update to 0.2.2 or later: many groups and devices are then drawn as summary nodes |
+| A lighting (sACN) network shows "Dante" | Fixed in 0.2.2: sACN and Dante are told apart by UDP port. A group seen only by its Join shows "sACN universe N or Dante" |
 | A group is on the map but grey / missing from Stream stats | Normal on a non-mirror port with IGMP snooping: IGMP-FLOW does not join, so the switch does not forward the stream here. Use a mirror (SPAN) port to see the stream itself |
 | "No Join/Leave seen" chip | The PC is on a normal port of a snooping switch. Mirror the uplink to the querier (or the devices' ports) to this PC's port |
 | Only this PC's traffic is visible | The port is not a mirror (SPAN) port, or the NIC is a virtual adapter |
@@ -151,3 +161,38 @@ Delete the program folder (or `IGMP-FLOW.exe`) and the data folder `%LOCALAPPDAT
 
 IGMP-FLOW is passive (it never transmits), listens only on `127.0.0.1`, rejects connections from other web pages, and treats network
 data as untrusted. It has no login: do not expose ports 8000/8765 outside the PC. Details are in the README.
+
+## 9. Known multicast groups
+
+IGMP-FLOW gives these addresses a name on the map and in the log. Use the table to look up an address you see.
+An address that is not listed can still be normal: other software on the same PC or device (lighting, control or AV
+software) may join its own groups. The *Source* column names where each entry was checked.
+
+| Address | Port (UDP) | Protocol / use | Shown in IGMP-FLOW as | Source |
+|---|---|---|---|---|
+| 224.0.0.1 | – | IGMP: all hosts (General Query destination) | All Hosts | IANA multicast registry |
+| 224.0.0.2 | – | IGMP: all routers (IGMPv2 Leave destination) | All Routers | IANA multicast registry |
+| 224.0.0.22 | – | IGMPv3 membership reports | IGMPv3 Reports | IANA multicast registry |
+| 224.0.0.107 | 319, 320 | PTP peer delay | PTP peer delay | IANA multicast registry |
+| 224.0.1.129 | 319, 320 | PTP clock sync (default domain; Dante PTPv1, AES67 PTPv2) | PTP clock sync | IANA, Audinate |
+| 224.0.1.130 – 224.0.1.132 | 319, 320 | PTP clock sync (other domains) | PTP clock sync (alternate domain) | IANA, Audinate |
+| 224.0.0.230 – 224.0.0.233 | 8700 – 8708 | Dante control and monitoring (ConMon) | Dante control & monitoring | Audinate |
+| 224.0.0.251 | 5353 | mDNS (Bonjour): device discovery, used by Dante Controller | mDNS | IANA, Audinate |
+| 224.0.0.252 | 5355 | LLMNR (Windows name resolution); not needed on an AV network | LLMNR | RFC 4795 |
+| 239.254.3.3 | 9998 | Dante PTP logging (only when enabled) | Dante PTP logging | Audinate |
+| 239.255.255.250 | 1900 | SSDP / UPnP discovery (office devices, Windows) | SSDP | UPnP Device Architecture |
+| 239.255.255.255 | 9875 | SAP: AES67 stream announcements | SAP | RFC 2974 |
+
+Ranges that IGMP-FLOW recognises by address **and port**:
+
+| Address range | Port (UDP) | Protocol / use | Shown in IGMP-FLOW as | Source |
+|---|---|---|---|---|
+| 239.255.0.0 – 239.255.249.255 | 5568 | sACN (ANSI E1.31) lighting data; universe N uses 239.255.(N÷256).(N mod 256) | sACN universe N | ANSI E1.31 (via lighting vendors' manuals) |
+| 239.255.0.0/16 | 4321 | Dante multicast audio/video | Dante audio | Audinate |
+| any 239.x.x.x | 5004 | AES67 (RTP) audio; 239.69.x.x is a common default but each device can be set differently | AES67 audio | AES67 vendors' guides |
+
+sACN and Dante share 239.255.x.x. An IGMP Join carries no port number, so a 239.255.x.x group seen only by its Join is shown
+as "sACN universe N or Dante" until its stream data is seen on this port.
+
+Sources: IANA *IPv4 Multicast Address Space Registry*; Audinate *Dante Information for Network Administrators*;
+RFC 2974 (SAP); RFC 4795 (LLMNR); UPnP Device Architecture (SSDP); ANSI E1.31 (sACN).

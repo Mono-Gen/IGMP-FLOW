@@ -80,6 +80,11 @@ function initTopology() {
 
     network = new vis.Network(container, data, options);
 
+    // まとめノードのダブルクリックで展開、展開済みのグループのダブルクリックで畳む
+    network.on("doubleClick", (params) => {
+        if (params.nodes && params.nodes.length) toggleFamily(params.nodes[0]);
+    });
+
     // Webフォントのロード完了時にトポロジを再描画する(アイコンが文字化けして見えるのを防ぐ)
     if (document.fonts) {
         document.fonts.ready.then(() => {
@@ -109,26 +114,66 @@ function getMulticastGroupLabel(ip) {
         const info = MULTICAST_LABELS[ip];
         return `${ip}\n${info.icon} ${info.tag}`;
     }
-    
-    // Dante 音声・制御ストリーム範囲
-    if (ip.startsWith("239.255.")) {
-        return `${ip}\n👥 ${STR.groupDante}`;
+    return `${ip}\n${groupKindLabel(ip)}`;
+}
+
+/**
+ * sACN(E1.31)のユニバース番号。ユニバースNは 239.255.(N>>8).(N&0xFF) 宛(有効範囲 1〜63999)。
+ * backend/packet_analyzer.py の sacn_universe と同じ式。
+ */
+function sacnUniverse(ip) {
+    const p = ip.split(".").map(Number);
+    if (p.length !== 4 || p[0] !== 239 || p[1] !== 255 || p.some(isNaN)) return null;
+    const u = (p[2] << 8) | p[3];
+    return u >= 1 && u <= 63999 ? u : null;
+}
+
+/**
+ * グループの種類。データを観測して種類が分かったグループはそれを優先する。
+ * IGMP Join にはポート番号が無く、239.255.x.x は sACN と Dante のどちらもあり得るため、
+ * 観測前は "sacn-or-dante" とする(Issue #1: 照明の sACN が Dante と表示された)。
+ */
+function groupKind(ip) {
+    const proto = groupProto.get(ip);
+    if (proto === "sACN") return "sacn";
+    if (proto === "Dante-Audio") return "dante";
+    if (proto === "AES67-Audio") return "aes67";
+    if (proto) return ip.startsWith("239.") ? "private" : "generic"; // データを見て未分類と確定した
+    if (sacnUniverse(ip) !== null) return "sacn-or-dante";
+    return ip.startsWith("239.") ? "private" : "generic";
+}
+
+/** グループの用途表記(種類ごと)。 */
+function groupKindLabel(ip) {
+    const universe = sacnUniverse(ip);
+    switch (groupKind(ip)) {
+        case "sacn": return universe !== null ? STR.groupSacn(universe) : "sACN";
+        case "dante": return STR.groupDante;
+        case "aes67": return STR.groupAes67;
+        case "sacn-or-dante": return STR.groupSacnOrDante(universe);
+        case "private": return STR.groupPrivate;
+        default: return STR.groupGeneric;
     }
-    
-    // 汎用プライベートマルチキャスト範囲
-    if (ip.startsWith("239.")) {
-        return `${ip}\n👥 ${STR.groupPrivate}`;
-    }
-    
-    return `${ip}\n👥 ${STR.groupGeneric}`;
 }
 
 // アイコン定義マッピング (FontAwesome 6 Unicode)
 const ICONS = {
     querier: { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf521", color: "#8b5cf6", size: 45 }, // 👑 (Crown)
-    group: { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf500", color: "#10b981", size: 40 },   // 👥 (Users)
+    group: { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf519", color: "#10b981", size: 40 },   // 配信されるストリーム (tower-broadcast)
+    family: { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf5fd", color: "#10b981", size: 54 }, // まとめ (layer-group)
+    subnet: { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf233", color: "#3b82f6", size: 48 },  // 端末のまとめ (server)
     host: { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf109", color: "#3b82f6", size: 36 },     // 💻 (Laptop)
     sync: { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf017", color: "#f59e0b", size: 38 }      // ⏰ (Clock)
+};
+
+// グループの種類ごとのアイコン。色だけに頼らないよう形も変える(色覚の違いでも区別できるように)
+const GROUP_KIND_ICONS = {
+    "sacn": { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf0eb", color: "#f59e0b", size: 40 },          // 照明 (lightbulb)
+    "dante": { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf028", color: "#ef4444", size: 40 },         // 音声 (volume-high)
+    "aes67": { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf83e", color: "#ec4899", size: 40 },         // 音声 (wave-square)
+    "sacn-or-dante": { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf059", color: "#a78bfa", size: 40 }, // 未確定 (circle-question)
+    "private": ICONS.group,
+    "generic": ICONS.group
 };
 
 /**
@@ -179,58 +224,339 @@ function updateNode(id, label, type, subtitle = "") {
         title: tooltipElement(subtitle || targetLabel), // ホバーツールチップ
         customType: targetType // 内部仕分け用タグ
     };
+    // まとめ表示で隠すのは一般ホストだけ。クエリア/クロックへ昇格したノードは必ず表示に戻す
+    if (targetType !== "host") nodeData.hidden = false;
 
     if (exists) {
         // 既存のノード情報をマージ (IP ➔ mDNS解決名 への昇格時などに実行)
+        if (targetType !== "host") nodeData.physics = true;
         nodes.update(nodeData);
+        if (exists.customType !== targetType) scheduleGroupRender();
     } else {
         nodes.add(nodeData);
+        if (targetType === "host") scheduleGroupRender();
     }
 }
 
+// ------------------------------------------------------------------------------
+// マルチキャストグループのモデルと描画
+// グループが大量にある現場(照明の sACN 数百ユニバース、大規模 Dante/AES67 等)でも図が読めるよう、
+// グループの総数がしきい値を超えたら、同じ系統(アドレス範囲)のグループを 1 つのまとめノードにする。
+// まとめ方は用途に依らない汎用の仕組みにして、照明以外の環境でも同じように効くようにする。
+// ------------------------------------------------------------------------------
+// グループの総数がこれを超えたら、まとめ表示を始める。
+// 根拠: 再現(Issue #1)では 300 グループでラベルが重なり判読不能、既存デモの 10 個前後は問題なし。
+// 1 画面でラベルを読める目安として 40 とした。
+const GROUP_COLLAPSE_THRESHOLD = 40;
+// 系統内のグループがこれ未満なら、まとめても見通しが良くならないので個別に表示する
+const GROUP_COLLAPSE_MIN_FAMILY = 5;
+// 端末(一般ホスト)の数がこれを超えたら、同じ /24 サブネットの端末を 1 つのまとめノードにする。
+// 根拠: 再現(混在環境 60 台)で端末ラベルが重なり判読不能になった。グループのしきい値より小さいのは、
+// 端末ノードは名前が長く、1 台あたりの面積が大きいため。
+const HOST_COLLAPSE_THRESHOLD = 30;
+const HOST_COLLAPSE_MIN_SUBNET = 5;
+// イベントが連続して届くたびに描き直すと重いので、まとめて描き直す間隔(ms)
+const GROUP_RENDER_DEBOUNCE_MS = 300;
+
+const groupModel = new Map();       // group_ip -> { title, members: Set<host id> }
+const groupProto = new Map();       // group_ip -> データ面で観測したプロトコル(sACN / Dante-Audio 等)
+const expandedFamilies = new Set(); // 利用者が展開したまとめ(系統キー)
+let groupRenderTimer = null;
+
 /**
- * トポロジ上のエッジ（接続線）を追加します（重複防止）。
+ * グループの系統(まとめる単位)を返す。
+ * 239.255.0.1〜239.255.249.255 は sACN/Dante の範囲として 1 系統、224.0.0.x はリンクローカル、それ以外は /16 単位。
  */
-function addEdge(fromId, toId, edgeId, label = "") {
-    if (!edges.get(edgeId)) {
-        edges.add({
-            id: edgeId,
-            from: fromId,
-            to: toId,
-            label: label,
-            font: { color: "#94a3b8", size: 10, align: "middle" },
-            color: { color: "rgba(59, 130, 246, 0.4)" } // 受信中をブルーネオンで表現
-        });
+function groupFamily(ip) {
+    const p = ip.split(".");
+    if (sacnUniverse(ip) !== null) return { key: "fam:sacn-dante", label: STR.familySacnDante };
+    if (p[0] === "224" && p[1] === "0" && p[2] === "0") return { key: "fam:224.0.0", label: STR.familyLinkLocal };
+    if (p[0] === "239" && p[1] === "255") return { key: "fam:239.255-other", label: STR.family239255Other };
+    return { key: `fam:${p[0]}.${p[1]}`, label: `${p[0]}.${p[1]}.x.x` };
+}
+
+function isGroupDataSeen(groupIp) {
+    const last = groupDataLastSeen.get(groupIp);
+    return last !== undefined && Date.now() - last <= GROUP_DATA_STALE_MS;
+}
+
+/** 端末がグループに参加した(または送信元として観測された)ことをモデルへ記録する。 */
+function groupJoin(hostId, groupIp, title) {
+    let g = groupModel.get(groupIp);
+    if (!g) {
+        g = { title, members: new Set() };
+        groupModel.set(groupIp, g);
     }
+    g.title = title;
+    g.members.add(hostId);
+    scheduleGroupRender();
+}
+
+/** 端末がグループから離脱した。参加者が 0 になったグループは消す。 */
+function groupLeave(hostId, groupIp) {
+    const g = groupModel.get(groupIp);
+    if (!g) return;
+    g.members.delete(hostId);
+    if (g.members.size === 0) {
+        groupModel.delete(groupIp);
+        groupProto.delete(groupIp);
+        groupDataLastSeen.delete(groupIp);
+    }
+    scheduleGroupRender();
+}
+
+function scheduleGroupRender() {
+    if (groupRenderTimer !== null) return;
+    groupRenderTimer = setTimeout(() => {
+        groupRenderTimer = null;
+        renderGroups();
+    }, GROUP_RENDER_DEBOUNCE_MS);
+}
+
+/** どの系統をまとめて表示するかを決める。 */
+function collapsedFamilyKeys() {
+    const keys = new Set();
+    if (groupModel.size <= GROUP_COLLAPSE_THRESHOLD) return keys;
+    const sizes = new Map();
+    groupModel.forEach((_, ip) => {
+        const k = groupFamily(ip).key;
+        sizes.set(k, (sizes.get(k) || 0) + 1);
+    });
+    sizes.forEach((n, k) => {
+        if (n >= GROUP_COLLAPSE_MIN_FAMILY && !expandedFamilies.has(k)) keys.add(k);
+    });
+    return keys;
+}
+
+/** 端末をまとめる単位(/24 サブネット)のキー。IP として読めない ID はまとめない。 */
+function hostSubnetKey(id) {
+    const p = String(id).split(".");
+    if (p.length !== 4 || p.some(x => x === "" || isNaN(Number(x))) || id === "0.0.0.0") return null;
+    return `net:${p[0]}.${p[1]}.${p[2]}`;
 }
 
 /**
- * 特定の接続線またはノードを安全に削除します。
+ * まとめて表示する端末を決める。クエリアと PTP クロックは役割が重要なので常に個別に出す。
+ * @returns {Map<string, string>} 端末ID -> サブネットのまとめキー
  */
-function removeEdge(edgeId) {
-    if (edges.get(edgeId)) {
-        edges.remove(edgeId);
-    }
+function collapsedHostMap() {
+    const result = new Map();
+    const hosts = nodes.get({ filter: (n) => n.customType === "host" });
+    if (hosts.length <= HOST_COLLAPSE_THRESHOLD) return result;
+    const bySubnet = new Map();
+    hosts.forEach(h => {
+        const k = hostSubnetKey(h.id);
+        if (!k) return;
+        if (!bySubnet.has(k)) bySubnet.set(k, []);
+        bySubnet.get(k).push(h.id);
+    });
+    bySubnet.forEach((ids, k) => {
+        if (ids.length >= HOST_COLLAPSE_MIN_SUBNET && !expandedFamilies.has(k)) ids.forEach(id => result.set(id, k));
+    });
+    return result;
 }
 
 /**
- * 孤立したマルチキャストグループノード（誰も受信していないグループ）を自動お掃除。
+ * モデルから、グループ/まとめノードと、それらへ繋がる線を描き直す。
+ * 差分だけを DataSet に反映し、残るノードは位置を保つ(物理演算の揺れを抑える)。
  */
-function cleanupGroupNodes() {
-    const activeNodes = nodes.get({
-        filter: (item) => item.customType === "group"
+function renderGroups() {
+    lastSeenSnapshot = seenSnapshot();
+    const collapsed = collapsedFamilyKeys();
+    const hostMap = collapsedHostMap();
+    const shown = (h) => hostMap.get(h) || h; // 端末がまとめられていれば、線はまとめノードへ繋ぐ
+    const wantNodes = new Map(); // node id -> node data
+    const wantEdges = new Map(); // edge id -> { from, to, label }
+    const families = new Map();  // 系統キー -> { label, groups: [], seen: 0, kinds: Set, members: Set }
+
+    groupModel.forEach((g, ip) => {
+        const fam = groupFamily(ip);
+        if (collapsed.has(fam.key)) {
+            let f = families.get(fam.key);
+            if (!f) {
+                f = { label: fam.label, groups: [], seen: 0, kinds: new Set(), members: new Set() };
+                families.set(fam.key, f);
+            }
+            f.groups.push(ip);
+            f.kinds.add(groupKind(ip));
+            if (isGroupDataSeen(ip)) f.seen += 1;
+            g.members.forEach(h => f.members.add(h));
+            return;
+        }
+        wantNodes.set(ip, groupNodeData(ip, g.title));
+        g.members.forEach(h => wantEdges.set(`${shown(h)}_to_${ip}`, { from: shown(h), to: ip }));
     });
 
-    activeNodes.forEach(groupNode => {
-        const connectedEdges = edges.get({
-            filter: (edge) => edge.from === groupNode.id || edge.to === groupNode.id
-        });
-        
-        // 接続されている端末が0台になったグループはフェードアウト削除
-        if (connectedEdges.length === 0) {
-            nodes.remove(groupNode.id);
+    families.forEach((f, key) => {
+        wantNodes.set(key, familyNodeData(key, f));
+        f.members.forEach(h => wantEdges.set(`${shown(h)}_to_${key}`, { from: shown(h), to: key }));
+    });
+
+    // クエリアとグループ(まとめ)を薄い線で結び、トポロジを紐付ける
+    const queriers = nodes.get({ filter: (n) => n.customType === "querier" });
+    queriers.forEach(q => {
+        wantNodes.forEach((_, id) => wantEdges.set(`${q.id}_to_${id}`, { from: q.id, to: id, label: "Query" }));
+    });
+
+    // 端末のまとめノード。まとめた端末は隠す(消すと名前解決などの情報が失われるため)
+    const subnets = new Map(); // まとめキー -> 端末ID の配列
+    hostMap.forEach((k, id) => {
+        if (!subnets.has(k)) subnets.set(k, []);
+        subnets.get(k).push(id);
+    });
+    subnets.forEach((ids, k) => wantNodes.set(k, subnetNodeData(k, ids)));
+    const hostVisibility = nodes.get({ filter: (n) => n.customType === "host" && Boolean(n.hidden) !== hostMap.has(n.id) })
+        .map(n => ({ id: n.id, hidden: hostMap.has(n.id), physics: !hostMap.has(n.id) }));
+    if (hostVisibility.length) nodes.update(hostVisibility);
+
+    // 不要になったグループ/まとめノードと、その線を消す
+    const removeEdgeIds = edges.get({ filter: (e) => e.groupEdge && !wantEdges.has(e.id) }).map(e => e.id);
+    if (removeEdgeIds.length) edges.remove(removeEdgeIds);
+    const removeNodeIds = nodes.get({ filter: (n) => ["group", "family", "subnet"].includes(n.customType) && !wantNodes.has(n.id) })
+        .map(n => n.id);
+    if (removeNodeIds.length) nodes.remove(removeNodeIds);
+
+    const changed = [];
+    wantNodes.forEach((n, id) => {
+        const sig = nodeSignature(n);
+        if (renderedSignature.get(id) !== sig || !nodes.get(id)) {
+            renderedSignature.set(id, sig);
+            changed.push(n);
         }
     });
+    renderedSignature.forEach((_, id) => { if (!wantNodes.has(id)) renderedSignature.delete(id); });
+    if (changed.length) nodes.update(changed);
+    const addEdges = [];
+    wantEdges.forEach((e, id) => {
+        if (!edges.get(id)) {
+            addEdges.push({
+                id, from: e.from, to: e.to, label: e.label || "", groupEdge: true,
+                font: { color: "#94a3b8", size: 10, align: "middle" },
+                color: { color: "rgba(59, 130, 246, 0.4)" } // 受信中をブルーネオンで表現
+            });
+        }
+    });
+    if (addEdges.length) edges.add(addEdges);
+
+    renderGroupSummary(families, subnets);
+}
+
+/** 端末のまとめノード。 */
+function subnetNodeData(key, ids) {
+    const subnet = `${key.slice(4)}.0/24`;
+    return {
+        id: key,
+        label: STR.subnetLabel(subnet, ids.length),
+        shape: "icon",
+        icon: ICONS.subnet,
+        title: tooltipElement(STR.subnetTitle(subnet, ids.length)),
+        customType: "subnet"
+    };
+}
+
+/** 種類ごとのアイコン。観測が無いグループは種類に関係なく灰色にする。 */
+function groupIcon(kind, seen) {
+    const base = GROUP_KIND_ICONS[kind] || ICONS.group;
+    return { ...base, color: seen ? base.color : GROUP_COLOR_NO_DATA };
+}
+
+/** 個別のグループノード。データ面の観測状態をツールチップと色で示す。 */
+function groupNodeData(ip, title) {
+    const seen = isGroupDataSeen(ip);
+    const state = seen ? STR.groupDataSeen : STR.groupDataNotSeen;
+    const fam = groupFamily(ip);
+    const hint = expandedFamilies.has(fam.key) ? `\n${STR.familyCollapseHint}` : "";
+    const kind = MULTICAST_LABELS[ip] ? "generic" : groupKind(ip);
+    return {
+        id: ip,
+        label: getMulticastGroupLabel(ip),
+        shape: "icon",
+        icon: groupIcon(kind, seen),
+        title: tooltipElement(`${title || STR.groupTitle(ip)}\n${state}${hint}`),
+        customType: "group",
+        familyKey: fam.key
+    };
+}
+
+/** 系統ごとのまとめノード。データを観測したグループが 1 つでもあれば色付きにする。 */
+function familyNodeData(key, f) {
+    const sorted = f.groups.slice().sort(compareIp);
+    const range = `${sorted[0]} – ${sorted[sorted.length - 1]}`;
+    // 系統内の種類が 1 つに決まればその色、混在ならまとめ用の色
+    const kind = f.kinds.size === 1 ? Array.from(f.kinds)[0] : null;
+    const color = kind && GROUP_KIND_ICONS[kind] ? GROUP_KIND_ICONS[kind].color : ICONS.family.color;
+    return {
+        id: key,
+        label: STR.familyLabel(f.label, f.groups.length, f.seen),
+        shape: "icon",
+        icon: { ...ICONS.family, color: f.seen > 0 ? color : GROUP_COLOR_NO_DATA },
+        title: tooltipElement(STR.familyTitle(f.label, f.groups.length, f.seen, f.members.size, range)),
+        customType: "family"
+    };
+}
+
+/** ノードの見た目の要約。前回の描画と同じなら DataSet を更新しない(大量グループ時の負荷対策)。 */
+const renderedSignature = new Map();
+function nodeSignature(n) {
+    const title = n.title && n.title.textContent !== undefined ? n.title.textContent : String(n.title);
+    return `${n.label}|${n.icon.code}|${n.icon.color}|${title}`;
+}
+
+/** 「データを観測中」のグループの集合。変わった時だけ描き直す(秒数表示の更新は描き直しの時に追随する)。 */
+let lastSeenSnapshot = "";
+function seenSnapshot() {
+    const seen = [];
+    groupDataLastSeen.forEach((_, ip) => { if (isGroupDataSeen(ip)) seen.push(ip); });
+    return seen.sort().join(",");
+}
+
+function compareIp(a, b) {
+    const pa = a.split(".").map(Number), pb = b.split(".").map(Number);
+    for (let i = 0; i < 4; i++) if (pa[i] !== pb[i]) return pa[i] - pb[i];
+    return 0;
+}
+
+/** 状態バーに「N グループをまとめて表示中」を出す。 */
+function renderGroupSummary(families, subnets = new Map()) {
+    const chip = document.getElementById("group-summary");
+    if (!chip) return;
+    let groups = 0;
+    families.forEach(f => { groups += f.groups.length; });
+    let hosts = 0;
+    subnets.forEach(ids => { hosts += ids.length; });
+    const parts = [];
+    if (groups) parts.push(STR.groupSummary(groups, families.size));
+    if (hosts) parts.push(STR.hostSummary(hosts, subnets.size));
+    chip.hidden = parts.length === 0;
+    chip.textContent = parts.length ? `${parts.join(" / ")} — ${STR.summaryExpandHint}` : "";
+}
+
+/** まとめノードのダブルクリックで展開し、展開済みの系統/サブネットのノードのダブルクリックで畳む。 */
+function toggleFamily(nodeId) {
+    const node = nodes.get(nodeId);
+    if (!node) return;
+    const subnetKey = node.customType === "host" ? hostSubnetKey(node.id) : null;
+    if (node.customType === "family" || node.customType === "subnet") {
+        expandedFamilies.add(node.id);
+    } else if (node.customType === "group" && expandedFamilies.has(node.familyKey)) {
+        expandedFamilies.delete(node.familyKey);
+    } else if (subnetKey && expandedFamilies.has(subnetKey)) {
+        expandedFamilies.delete(subnetKey);
+    } else {
+        return;
+    }
+    renderGroups();
+}
+
+/** 画面の初期化(リセット/NIC切替)でグループの状態も捨てる。 */
+function resetGroupModel() {
+    groupModel.clear();
+    groupProto.clear();
+    expandedFamilies.clear();
+    groupDataLastSeen.clear();
+    renderedSignature.clear();
+    lastSeenSnapshot = "";
+    renderGroupSummary(new Map());
 }
 
 // ------------------------------------------------------------------------------
@@ -241,44 +567,21 @@ function cleanupGroupNodes() {
 // 集計は1秒間隔(UI_AGGREGATE_INTERVAL_SECONDS)。数回の取りこぼしで表示が揺れないよう余裕を持たせる
 const GROUP_DATA_STALE_MS = 5000;
 const groupDataLastSeen = new Map(); // group_ip -> 最後にデータ面パケットを観測した時刻(ms)
-const groupBaseTitle = new Map();    // group_ip -> 観測状態を付ける前のツールチップ本文
 const GROUP_COLOR_NO_DATA = "#64748b"; // 未観測は異常ではないので赤・黄ではなく灰色にする
 
-function markGroupDataSeen(groupIp) {
+function markGroupDataSeen(groupIp, proto) {
     if (!groupIp) return;
+    const wasSeen = isGroupDataSeen(groupIp);
+    const protoChanged = Boolean(proto) && groupProto.get(groupIp) !== proto;
     groupDataLastSeen.set(groupIp, Date.now());
-    applyGroupDataState(groupIp);
-}
-
-/** グループノードのツールチップとアイコン色を、データ面の観測状態に合わせて更新する。 */
-function applyGroupDataState(groupIp) {
-    const node = nodes.get(groupIp);
-    if (!node || node.customType !== "group") return;
-    const last = groupDataLastSeen.get(groupIp);
-    const age = last === undefined ? Infinity : Date.now() - last;
-    const seen = age <= GROUP_DATA_STALE_MS;
-    const state = seen ? STR.groupDataSeen(Math.floor(age / 1000)) : STR.groupDataNotSeen;
-    const base = groupBaseTitle.get(groupIp) || STR.groupTitle(groupIp);
-    nodes.update({
-        id: groupIp,
-        title: tooltipElement(`${base}\n${state}`),
-        icon: { ...ICONS.group, color: seen ? ICONS.group.color : GROUP_COLOR_NO_DATA }
-    });
-}
-
-/** グループノードを追加・更新し、観測状態を付与する。 */
-function updateGroupNode(groupIp, title) {
-    groupBaseTitle.set(groupIp, title);
-    updateNode(groupIp, getMulticastGroupLabel(groupIp), "group", title);
-    applyGroupDataState(groupIp);
-}
-
-function refreshAllGroupDataStates() {
-    nodes.get({ filter: (n) => n.customType === "group" }).forEach(n => applyGroupDataState(n.id));
+    if (proto) groupProto.set(groupIp, proto);
+    if (!wasSeen || protoChanged) scheduleGroupRender();
 }
 
 // flow_stats はフローがある時しか届かないため、途絶したグループを定期的に「未観測」へ戻す
-setInterval(refreshAllGroupDataStates, 1000);
+setInterval(() => {
+    if (seenSnapshot() !== lastSeenSnapshot) scheduleGroupRender();
+}, 1000);
 
 // ==============================================================================
 // 4. バックエンドから届くイベントのリアルタイム処理 (メイン)
@@ -304,31 +607,16 @@ function handleNetworkEvent(data) {
             // 受信端末ノードを追加
             updateNode(srcIp, deviceName, "host", subtitle);
             
-            // グループノードを追加（すでにクエリアが存在すれば繋ぐ）
-            updateGroupNode(groupIp, STR.groupTitle(groupIp));
-            
-            // エッジを繋ぐ (端末 ➔ グループ)
-            const edgeId = `${srcIp}_to_${groupIp}`;
-            addEdge(srcIp, groupIp, edgeId);
-            
-            // 近くにいるクエリアとも自動で薄い線でグループを繋ぎトポロジを紐付ける
-            const queriers = nodes.get({ filter: (n) => n.customType === "querier" });
-            queriers.forEach(q => {
-                const qEdgeId = `${q.id}_to_${groupIp}`;
-                addEdge(q.id, groupIp, qEdgeId, "Query");
-            });
+            // グループへの参加をモデルに記録(グループ/まとめノードと線は renderGroups が描く)
+            groupJoin(srcIp, groupIp, STR.groupTitle(groupIp));
         }
-        
+
         // A-3. 受信停止（リーブ）
         else if (data.event_code === "igmp_leave") {
-            const edgeId = `${srcIp}_to_${groupIp}`;
-            removeEdge(edgeId);
-            
-            // 不要なグループノードのお掃除
-            cleanupGroupNodes();
+            groupLeave(srcIp, groupIp);
         }
     }
-    
+
     // B. クロック同期 (PTPv1/v2) のトポロジ表示処理
     else if (data.proto === "PTP") {
         // PTP送信元クロック端末を追加
@@ -337,9 +625,8 @@ function handleNetworkEvent(data) {
         
         // 共通同期グループにエッジを紐付け
         // PTPメッセージ自体がこのグループ宛てのデータ面パケットなので「観測あり」とする
-        updateGroupNode(groupIp, STR.ptpGroupTitle(groupIp));
+        groupJoin(srcIp, groupIp, STR.ptpGroupTitle(groupIp));
         markGroupDataSeen(groupIp);
-        addEdge(srcIp, groupIp, `${srcIp}_to_${groupIp}`);
     }
 
     // C. 汎用制御（mDNS, ConMon等）のノード追加表示
@@ -500,7 +787,7 @@ function renderFlowStats(flows) {
         updateNode(f.src_ip, f.resolved_name || f.src_ip, "host", `IP: ${f.src_ip}\nMAC: ${f.src_mac}`);
     });
     // 表示上限(50件)に関係なく、届いた全フローでグループの観測状態を更新する
-    flows.forEach(f => markGroupDataSeen(f.group_ip));
+    flows.forEach(f => markGroupDataSeen(f.group_ip, f.proto));
 }
 
 // ------------------------------------------------------------------------------
@@ -914,8 +1201,7 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("btn-reset").addEventListener("click", () => {
         nodes.clear();
         edges.clear();
-        groupDataLastSeen.clear();
-        groupBaseTitle.clear();
+        resetGroupModel();
         clearLogView();
         ["flow-list-body", "ptp-list-body", "ptp-alerts"].forEach(id => {
             const el = document.getElementById(id);
@@ -965,6 +1251,7 @@ document.addEventListener("DOMContentLoaded", () => {
             // NIC切替時は、旧NICの状態が混ざらないようトポロジとログを初期化する
             nodes.clear();
             edges.clear();
+            resetGroupModel();
             clearLogView();
 
             // バックエンドへNIC動的切り替えコマンドを送信
