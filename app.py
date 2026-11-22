@@ -14,9 +14,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # コマンドプロンプト非表示（--noconsole）時に stdout/stderr が None になりクラッシュするのを防ぐセーフガード
 if sys.stdout is None:
-    sys.stdout = open(os.devnull, 'w')
+    sys.stdout = open(os.devnull, 'w', encoding='utf-8')
 if sys.stderr is None:
-    sys.stderr = open(os.devnull, 'w')
+    sys.stderr = open(os.devnull, 'w', encoding='utf-8')
+
+# 英語/仏語版Windows等(cp1252)では日本語ログを表せず UnicodeEncodeError で落ちるため(Issue #1)、
+# 表せない文字は置換して出力を続ける
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(errors='replace')
+    except (AttributeError, ValueError):  # reconfigure非対応のストリームはそのまま使う
+        pass
 
 from backend.main import main
 
