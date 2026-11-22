@@ -133,6 +133,14 @@
                     <span class="legend-icon icon-unsure"><i class="fa-solid fa-circle-question"></i></span>
                     <span class="legend-label">sACN or Dante (no data yet)</span>
                 </div>
+                <div class="legend-item" title="Arrow from a sender to a group: stream data from that device was seen on this port in the last few seconds. Blue lines without arrows are receivers (IGMP Join).">
+                    <span class="legend-icon icon-sender"><i class="fa-solid fa-arrow-right"></i></span>
+                    <span class="legend-label">Sender → group (data seen)</span>
+                </div>
+                <div class="legend-item" title="More than one sender to one group, or stream data with no receiver's Join. Hover over the group for details.">
+                    <span class="legend-icon icon-warn"><i class="fa-solid fa-triangle-exclamation"></i></span>
+                    <span class="legend-label">⚠ Check this group</span>
+                </div>
                 <div class="legend-item">
                     <span class="legend-icon icon-group"><i class="fa-solid fa-layer-group"></i></span>
                     <span class="legend-label">Many groups (double-click)</span>

@@ -85,6 +85,11 @@ function initTopology() {
         if (params.nodes && params.nodes.length) toggleFamily(params.nodes[0]);
     });
 
+    // ノードのクリックで、つながる線とノードだけを強調する。空白のクリックで元に戻す
+    network.on("click", (params) => {
+        setFocus(params.nodes && params.nodes.length ? params.nodes[0] : null);
+    });
+
     // Webフォントのロード完了時にトポロジを再描画する(アイコンが文字化けして見えるのを防ぐ)
     if (document.fonts) {
         document.fonts.ready.then(() => {
@@ -222,19 +227,30 @@ function updateNode(id, label, type, subtitle = "") {
         shape: "icon",
         icon: iconConfig,
         title: tooltipElement(subtitle || targetLabel), // ホバーツールチップ
-        customType: targetType // 内部仕分け用タグ
+        customType: targetType, // 内部仕分け用タグ
+        dimmed: false
     };
+    // 強調中で、このノードが薄くなっているなら、薄いまま更新する(明るく戻って明滅しないように)
+    if (exists && exists.dimmed && focusId !== null) {
+        nodeData.dimmed = true;
+        nodeData.undimmed = { icon: nodeData.icon };
+        nodeData.icon = { ...nodeData.icon, color: DIM_ICON_COLOR };
+        nodeData.font = { color: DIM_FONT_COLOR };
+    } else {
+        nodeData.font = { color: NODE_FONT_COLOR };
+    }
     // まとめ表示で隠すのは一般ホストだけ。クエリア/クロックへ昇格したノードは必ず表示に戻す
-    if (targetType !== "host") nodeData.hidden = false;
+    if (targetType !== "host" && exists && exists.customType === "host") nodeData.hidden = false;
 
     if (exists) {
         // 既存のノード情報をマージ (IP ➔ mDNS解決名 への昇格時などに実行)
         if (targetType !== "host") nodeData.physics = true;
         nodes.update(nodeData);
-        if (exists.customType !== targetType) scheduleGroupRender();
+        // 種類が変わった時は、まとめ判定とフィルタの対象が変わるので描き直す
+        if (exists.customType !== targetType || exists.label !== nodeData.label) scheduleGroupRender();
     } else {
         nodes.add(nodeData);
-        if (targetType === "host") scheduleGroupRender();
+        scheduleGroupRender();
     }
 }
 
@@ -258,7 +274,9 @@ const HOST_COLLAPSE_MIN_SUBNET = 5;
 // イベントが連続して届くたびに描き直すと重いので、まとめて描き直す間隔(ms)
 const GROUP_RENDER_DEBOUNCE_MS = 300;
 
-const groupModel = new Map();       // group_ip -> { title, members: Set<host id> }
+// group_ip -> { title, members: Set<受信側の端末ID>, senders: Map<送信元の端末ID, 最終観測(ms)>,
+//               requested: Map<受信側の端末ID, IGMPv3 で指定した送信元IPの配列> }
+const groupModel = new Map();
 const groupProto = new Map();       // group_ip -> データ面で観測したプロトコル(sACN / Dante-Audio 等)
 const expandedFamilies = new Set(); // 利用者が展開したまとめ(系統キー)
 let groupRenderTimer = null;
@@ -280,29 +298,105 @@ function isGroupDataSeen(groupIp) {
     return last !== undefined && Date.now() - last <= GROUP_DATA_STALE_MS;
 }
 
-/** 端末がグループに参加した(または送信元として観測された)ことをモデルへ記録する。 */
-function groupJoin(hostId, groupIp, title) {
+// 他の機器の Join(IGMP Report)をこのポートで観測したか。バックエンドが自 PC の Report を除いて数える
+// (querier_status.reports_seen。NIC 切替でリセットされる)。受信者のいないストリームの警告は、これが真のときだけ出す
+let othersReportsSeen = false;
+
+function ensureGroup(groupIp, title) {
     let g = groupModel.get(groupIp);
     if (!g) {
-        g = { title, members: new Set() };
+        g = { title, members: new Set(), senders: new Map(), requested: new Map(), excludeMode: new Set() };
         groupModel.set(groupIp, g);
     }
-    g.title = title;
+    if (title) g.title = title;
+    return g;
+}
+
+/**
+ * 端末がグループに参加した(IGMP Join)ことをモデルへ記録する。
+ * sources は IGMPv3 で受信機が指定した送信元。指定が無ければ空配列。
+ */
+function groupJoin(hostId, groupIp, title, sources = [], recordType = "") {
+    const g = ensureGroup(groupIp, title);
     g.members.add(hostId);
+    if (recordType === "MODE_IS_EXCLUDE" || recordType === "CHANGE_TO_EXCLUDE_MODE") g.excludeMode.add(hostId);
+    else if (recordType === "MODE_IS_INCLUDE" || recordType === "CHANGE_TO_INCLUDE_MODE") g.excludeMode.delete(hostId);
+    if (recordType === "ALLOW_NEW_SOURCES" && g.excludeMode.has(hostId)) {
+        // 除外モードでの ALLOW は、除外の取り消し。受信したい送信元の一覧は変えない
+    } else if (recordType === "ALLOW_NEW_SOURCES" && g.requested.has(hostId)) {
+        // 追加の指定は、既存の指定に足す
+        const merged = new Set([...g.requested.get(hostId), ...sources]);
+        g.requested.set(hostId, Array.from(merged).slice(0, 64));
+    } else if (sources.length) {
+        g.requested.set(hostId, sources.slice(0, 64));
+    } else {
+        g.requested.delete(hostId);
+    }
     scheduleGroupRender();
 }
 
-/** 端末がグループから離脱した。参加者が 0 になったグループは消す。 */
+/**
+ * Join のうち、受信機が「この送信元から受けたい」と指定した送信元。
+ * EXCLUDE 系(MODE_IS_EXCLUDE / CHANGE_TO_EXCLUDE_MODE)の sources は「受けたくない送信元」なので含めない。
+ */
+function requestedSources(data) {
+    const include = ["MODE_IS_INCLUDE", "CHANGE_TO_INCLUDE_MODE", "ALLOW_NEW_SOURCES"];
+    return include.includes(data.record_type) && Array.isArray(data.sources) ? data.sources : [];
+}
+
+/** IGMPv3 の BLOCK_OLD_SOURCES: 指定していた送信元から外す。 */
+function groupBlockSources(hostId, groupIp, sources) {
+    const g = groupModel.get(groupIp);
+    if (!g || !g.requested.has(hostId)) return;
+    const remain = g.requested.get(hostId).filter(s => !sources.includes(s));
+    if (remain.length) {
+        g.requested.set(hostId, remain);
+        scheduleGroupRender();
+    } else if (!g.excludeMode.has(hostId)) {
+        groupLeave(hostId, groupIp); // INCLUDE{} = 受信停止
+    } else {
+        g.requested.delete(hostId);
+        scheduleGroupRender();
+    }
+}
+
+/** 端末がグループから離脱した。受信者も送信中の送信元もいなくなったグループは消す。 */
 function groupLeave(hostId, groupIp) {
     const g = groupModel.get(groupIp);
     if (!g) return;
     g.members.delete(hostId);
-    if (g.members.size === 0) {
+    g.requested.delete(hostId);
+    g.excludeMode.delete(hostId);
+    deleteGroupIfEmpty(groupIp, g);
+    scheduleGroupRender();
+}
+
+/** 送信元がグループへデータを送っているのを観測した(フロー統計・PTP)。 */
+function recordSender(hostId, groupIp, title) {
+    const g = ensureGroup(groupIp, groupModel.has(groupIp) ? null : title);
+    const isNew = !isSenderLive(g, hostId);
+    g.senders.set(hostId, Date.now());
+    if (isNew) scheduleGroupRender();
+}
+
+function isSenderLive(g, hostId) {
+    const t = g.senders.get(hostId);
+    return t !== undefined && Date.now() - t <= GROUP_DATA_STALE_MS;
+}
+
+/** 直近に送信を観測した送信元(途絶した送信元は含めない)。 */
+function liveSenders(g) {
+    const ids = [];
+    g.senders.forEach((_, id) => { if (isSenderLive(g, id)) ids.push(id); });
+    return ids;
+}
+
+function deleteGroupIfEmpty(groupIp, g) {
+    if (g.members.size === 0 && liveSenders(g).length === 0) {
         groupModel.delete(groupIp);
         groupProto.delete(groupIp);
         groupDataLastSeen.delete(groupIp);
     }
-    scheduleGroupRender();
 }
 
 function scheduleGroupRender() {
@@ -314,11 +408,11 @@ function scheduleGroupRender() {
 }
 
 /** どの系統をまとめて表示するかを決める。 */
-function collapsedFamilyKeys() {
+function collapsedFamilyKeys(visibleGroups) {
     const keys = new Set();
-    if (groupModel.size <= GROUP_COLLAPSE_THRESHOLD) return keys;
+    if (visibleGroups.length <= GROUP_COLLAPSE_THRESHOLD) return keys;
     const sizes = new Map();
-    groupModel.forEach((_, ip) => {
+    visibleGroups.forEach((ip) => {
         const k = groupFamily(ip).key;
         sizes.set(k, (sizes.get(k) || 0) + 1);
     });
@@ -339,9 +433,9 @@ function hostSubnetKey(id) {
  * まとめて表示する端末を決める。クエリアと PTP クロックは役割が重要なので常に個別に出す。
  * @returns {Map<string, string>} 端末ID -> サブネットのまとめキー
  */
-function collapsedHostMap() {
+function collapsedHostMap(filteredOut) {
     const result = new Map();
-    const hosts = nodes.get({ filter: (n) => n.customType === "host" });
+    const hosts = nodes.get({ filter: (n) => n.customType === "host" && !filteredOut.has(n.id) });
     if (hosts.length <= HOST_COLLAPSE_THRESHOLD) return result;
     const bySubnet = new Map();
     hosts.forEach(h => {
@@ -362,41 +456,89 @@ function collapsedHostMap() {
  */
 function renderGroups() {
     lastSeenSnapshot = seenSnapshot();
-    const collapsed = collapsedFamilyKeys();
-    const hostMap = collapsedHostMap();
+    const filter = mapFilter();
+    const drawReceivers = filter.protos === null || filter.protos.has("IGMP");
+
+    // 1. フィルタで表示するグループを決める(途絶した送信元しか持たないグループはここで片付ける)
+    const visible = [];
+    groupModel.forEach((g, ip) => {
+        if (g.members.size === 0 && liveSenders(g).length === 0) {
+            deleteGroupIfEmpty(ip, g);
+            return;
+        }
+        if (isGroupShownByFilter(ip, g, filter, drawReceivers)) visible.push(ip);
+    });
+
+    // 2. 線のつながる端末と、フィルタで隠す端末を決める
+    const linkedHosts = new Set();
+    visible.forEach(ip => {
+        const g = groupModel.get(ip);
+        if (drawReceivers) g.members.forEach(h => linkedHosts.add(h));
+        liveSenders(g).forEach(h => linkedHosts.add(h));
+    });
+    // フィルタで隠す端末: つながるグループがすべて隠れた端末と、文字列に合わない端末。
+    // どのグループにもつながらない端末(mDNS だけの機器など)は、プロトコルのチェックでは隠さない
+    const anyLinked = new Set();
+    groupModel.forEach(g => {
+        g.members.forEach(h => anyLinked.add(h));
+        liveSenders(g).forEach(h => anyLinked.add(h));
+    });
+    const filteredOut = new Set();
+    if (filter.active) {
+        nodes.get({ filter: (n) => FILTERABLE_TYPES.includes(n.customType) }).forEach(n => {
+            const byGroups = anyLinked.has(n.id) && !linkedHosts.has(n.id);
+            const byText = filter.text && !linkedHosts.has(n.id) && !nodeMatchesText(n, filter.text);
+            const byIgmp = n.customType === "querier" && !drawReceivers; // クエリアは IGMP の機器
+            if (byGroups || byText || byIgmp) filteredOut.add(n.id);
+        });
+    }
+    const collapsed = collapsedFamilyKeys(visible);
+    const hostMap = collapsedHostMap(filteredOut);
     const shown = (h) => hostMap.get(h) || h; // 端末がまとめられていれば、線はまとめノードへ繋ぐ
     const wantNodes = new Map(); // node id -> node data
-    const wantEdges = new Map(); // edge id -> { from, to, label }
-    const families = new Map();  // 系統キー -> { label, groups: [], seen: 0, kinds: Set, members: Set }
+    const wantEdges = new Map(); // edge id -> { from, to, label, kind }
+    const families = new Map();  // 系統キー -> まとめの集計
+    const receiversVisible = joinsVisible();
 
-    groupModel.forEach((g, ip) => {
+    visible.forEach(ip => {
+        const g = groupModel.get(ip);
+        const senders = liveSenders(g);
+        const status = groupStatus(ip, g, senders, receiversVisible);
         const fam = groupFamily(ip);
         if (collapsed.has(fam.key)) {
             let f = families.get(fam.key);
             if (!f) {
-                f = { label: fam.label, groups: [], seen: 0, kinds: new Set(), members: new Set() };
+                f = { label: fam.label, groups: [], seen: 0, kinds: new Set(), members: new Set(), senders: new Set(),
+                      multi: 0, noReceiver: 0 };
                 families.set(fam.key, f);
             }
             f.groups.push(ip);
             f.kinds.add(groupKind(ip));
             if (isGroupDataSeen(ip)) f.seen += 1;
             g.members.forEach(h => f.members.add(h));
+            senders.forEach(h => f.senders.add(h));
+            if (status.multi) f.multi += 1;
+            if (status.noReceiver) f.noReceiver += 1;
             return;
         }
-        wantNodes.set(ip, groupNodeData(ip, g.title));
-        g.members.forEach(h => wantEdges.set(`${shown(h)}_to_${ip}`, { from: shown(h), to: ip }));
+        wantNodes.set(ip, groupNodeData(ip, g, senders, status));
+        if (drawReceivers) g.members.forEach(h => wantEdges.set(`${shown(h)}_to_${ip}`, { from: shown(h), to: ip, kind: "receiver" }));
+        senders.forEach(h => wantEdges.set(`${shown(h)}_src_${ip}`, { from: shown(h), to: ip, kind: "sender" }));
     });
 
     families.forEach((f, key) => {
         wantNodes.set(key, familyNodeData(key, f));
-        f.members.forEach(h => wantEdges.set(`${shown(h)}_to_${key}`, { from: shown(h), to: key }));
+        if (drawReceivers) f.members.forEach(h => wantEdges.set(`${shown(h)}_to_${key}`, { from: shown(h), to: key, kind: "receiver" }));
+        f.senders.forEach(h => wantEdges.set(`${shown(h)}_src_${key}`, { from: shown(h), to: key, kind: "sender" }));
     });
 
     // クエリアとグループ(まとめ)を薄い線で結び、トポロジを紐付ける
     const queriers = nodes.get({ filter: (n) => n.customType === "querier" });
-    queriers.forEach(q => {
-        wantNodes.forEach((_, id) => wantEdges.set(`${q.id}_to_${id}`, { from: q.id, to: id, label: "Query" }));
-    });
+    if (drawReceivers) {
+        queriers.forEach(q => {
+            wantNodes.forEach((_, id) => wantEdges.set(`${q.id}_to_${id}`, { from: q.id, to: id, label: "Query", kind: "query" }));
+        });
+    }
 
     // 端末のまとめノード。まとめた端末は隠す(消すと名前解決などの情報が失われるため)
     const subnets = new Map(); // まとめキー -> 端末ID の配列
@@ -405,8 +547,10 @@ function renderGroups() {
         subnets.get(k).push(id);
     });
     subnets.forEach((ids, k) => wantNodes.set(k, subnetNodeData(k, ids)));
-    const hostVisibility = nodes.get({ filter: (n) => n.customType === "host" && Boolean(n.hidden) !== hostMap.has(n.id) })
-        .map(n => ({ id: n.id, hidden: hostMap.has(n.id), physics: !hostMap.has(n.id) }));
+    // 隠す端末: まとめた端末と、フィルタに合わない端末
+    const isHidden = (id) => hostMap.has(id) || filteredOut.has(id);
+    const hostVisibility = nodes.get({ filter: (n) => FILTERABLE_TYPES.includes(n.customType) && Boolean(n.hidden) !== isHidden(n.id) })
+        .map(n => ({ id: n.id, hidden: isHidden(n.id), physics: !isHidden(n.id) }));
     if (hostVisibility.length) nodes.update(hostVisibility);
 
     // 不要になったグループ/まとめノードと、その線を消す
@@ -429,16 +573,59 @@ function renderGroups() {
     const addEdges = [];
     wantEdges.forEach((e, id) => {
         if (!edges.get(id)) {
-            addEdges.push({
-                id, from: e.from, to: e.to, label: e.label || "", groupEdge: true,
-                font: { color: "#94a3b8", size: 10, align: "middle" },
-                color: { color: "rgba(59, 130, 246, 0.4)" } // 受信中をブルーネオンで表現
-            });
+            addEdges.push({ id, from: e.from, to: e.to, label: e.label || "", groupEdge: true, ...EDGE_STYLES[e.kind] });
         }
     });
     if (addEdges.length) edges.add(addEdges);
 
     renderGroupSummary(families, subnets);
+    applyFocus();
+}
+
+// フィルタで隠す対象になるノードの種類(グループとまとめノードは renderGroups が作り直す)
+const FILTERABLE_TYPES = ["host", "querier", "sync"];
+
+// 線の種類ごとの見た目。送信(データ)は矢印付きのオレンジで、受信(Join)の青と見分けられるようにする
+const EDGE_STYLES = {
+    receiver: { font: { color: "#94a3b8", size: 10, align: "middle" }, color: { color: "rgba(59, 130, 246, 0.4)" } },
+    query: { font: { color: "#94a3b8", size: 10, align: "middle" }, color: { color: "rgba(59, 130, 246, 0.4)" } },
+    sender: {
+        color: { color: "rgba(245, 158, 11, 0.85)" }, width: 2.5,
+        arrows: { to: { enabled: true, scaleFactor: 0.7 } }
+    }
+};
+
+/**
+ * グループの警告状態。
+ * multi: 送信元が 2 台以上(アドレスの重複設定の疑い)。
+ * noReceiver: データは届いているが受信者の Join が無い。ミラーではないポートでは他の機器の Join が
+ *   見えないのが普通なので、Join が見える環境(他の機器の Join を観測済みで、見えない警告が出ていない)でだけ判定する。
+ */
+function groupStatus(ip, g, senders, receiversVisible) {
+    // 名前付きのアドレス(PTP・mDNS 等)とリンクローカル(224.0.0.x)は、複数の送信元や Join 無しが正常なので対象外
+    if (KNOWN_GROUP_FILTER_KEYS[ip] || ip.startsWith("224.0.0.")) return { multi: false, noReceiver: false };
+    return {
+        multi: senders.length > 1,
+        noReceiver: receiversVisible && senders.length > 0 && g.members.size === 0
+    };
+}
+
+function joinsVisible() {
+    const hint = document.getElementById("report-visibility");
+    return othersReportsSeen && (!hint || hint.hidden);
+}
+
+/** 送信元などの端末の表示名(ノードのラベルの 1 行目と IP)。 */
+function hostDisplay(id) {
+    const n = nodes.get(id);
+    const name = n && n.label ? String(n.label).split("\n")[0] : id;
+    return name === id ? id : `${name} (${id})`;
+}
+
+/** 一覧を最大 8 件で表示し、残りは件数だけ出す(ツールチップが長くなりすぎないように)。 */
+function listForTooltip(items) {
+    const head = items.slice(0, 8).join(", ");
+    return items.length > 8 ? `${head} ${STR.andMore(items.length - 8)}` : head;
 }
 
 /** 端末のまとめノード。 */
@@ -450,7 +637,8 @@ function subnetNodeData(key, ids) {
         shape: "icon",
         icon: ICONS.subnet,
         title: tooltipElement(STR.subnetTitle(subnet, ids.length)),
-        customType: "subnet"
+        customType: "subnet",
+        dimmed: false, font: { color: NODE_FONT_COLOR }
     };
 }
 
@@ -461,19 +649,29 @@ function groupIcon(kind, seen) {
 }
 
 /** 個別のグループノード。データ面の観測状態をツールチップと色で示す。 */
-function groupNodeData(ip, title) {
+function groupNodeData(ip, g, senders, status) {
     const seen = isGroupDataSeen(ip);
-    const state = seen ? STR.groupDataSeen : STR.groupDataNotSeen;
+    const lines = [g.title || STR.groupTitle(ip), seen ? STR.groupDataSeen : STR.groupDataNotSeen];
+    // 送信元: データを観測した時だけ分かる。見えないときは「不明」と書き、「いない」とは書かない
+    lines.push(senders.length ? STR.groupSenders(listForTooltip(senders.map(hostDisplay))) : STR.groupSendersUnknown);
+    const requested = new Set();
+    g.requested.forEach(list => list.forEach(s => requested.add(s)));
+    if (requested.size) lines.push(STR.groupRequestedSources(listForTooltip(Array.from(requested).sort(compareIp))));
+    lines.push(STR.groupReceivers(g.members.size));
+    if (status.multi) lines.push(STR.groupMultiSender);
+    if (status.noReceiver) lines.push(STR.groupNoReceiver);
     const fam = groupFamily(ip);
-    const hint = expandedFamilies.has(fam.key) ? `\n${STR.familyCollapseHint}` : "";
+    if (expandedFamilies.has(fam.key)) lines.push(STR.familyCollapseHint);
     const kind = MULTICAST_LABELS[ip] ? "generic" : groupKind(ip);
+    const warn = status.multi || status.noReceiver;
     return {
         id: ip,
-        label: getMulticastGroupLabel(ip),
+        label: (warn ? STR.warnMark : "") + getMulticastGroupLabel(ip),
         shape: "icon",
         icon: groupIcon(kind, seen),
-        title: tooltipElement(`${title || STR.groupTitle(ip)}\n${state}${hint}`),
+        title: tooltipElement(lines.join("\n")),
         customType: "group",
+        dimmed: false, font: { color: NODE_FONT_COLOR },
         familyKey: fam.key
     };
 }
@@ -485,13 +683,19 @@ function familyNodeData(key, f) {
     // 系統内の種類が 1 つに決まればその色、混在ならまとめ用の色
     const kind = f.kinds.size === 1 ? Array.from(f.kinds)[0] : null;
     const color = kind && GROUP_KIND_ICONS[kind] ? GROUP_KIND_ICONS[kind].color : ICONS.family.color;
+    const lines = [STR.familyTitle(f.label, f.groups.length, f.seen, f.members.size, range)];
+    lines.push(f.senders.size ? STR.familySenders(f.senders.size) : STR.groupSendersUnknown);
+    if (f.multi) lines.push(STR.familyMultiSender(f.multi));
+    if (f.noReceiver) lines.push(STR.familyNoReceiver(f.noReceiver));
+    const warn = f.multi > 0 || f.noReceiver > 0;
     return {
         id: key,
-        label: STR.familyLabel(f.label, f.groups.length, f.seen),
+        label: (warn ? STR.warnMark : "") + STR.familyLabel(f.label, f.groups.length, f.seen),
         shape: "icon",
         icon: { ...ICONS.family, color: f.seen > 0 ? color : GROUP_COLOR_NO_DATA },
-        title: tooltipElement(STR.familyTitle(f.label, f.groups.length, f.seen, f.members.size, range)),
-        customType: "family"
+        title: tooltipElement(lines.join("\n")),
+        customType: "family",
+        dimmed: false, font: { color: NODE_FONT_COLOR }
     };
 }
 
@@ -507,6 +711,7 @@ let lastSeenSnapshot = "";
 function seenSnapshot() {
     const seen = [];
     groupDataLastSeen.forEach((_, ip) => { if (isGroupDataSeen(ip)) seen.push(ip); });
+    groupModel.forEach((g, ip) => liveSenders(g).forEach(h => seen.push(`${ip}<${h}`)));
     return seen.sort().join(",");
 }
 
@@ -556,7 +761,121 @@ function resetGroupModel() {
     groupDataLastSeen.clear();
     renderedSignature.clear();
     lastSeenSnapshot = "";
+    othersReportsSeen = false;
+    focusId = null;
+    dimmedEdges.clear();
     renderGroupSummary(new Map());
+}
+
+// ------------------------------------------------------------------------------
+// 上部のフィルタを図にも反映する
+// ログとフロー統計の絞り込みはサーバー側で行い(collectFilter → set_filter)、図はここで同じ条件に合わせる。
+// ------------------------------------------------------------------------------
+// 名前の付いたアドレスが、どのチェックボックスに属するか。どれか 1 つでも入っていれば表示する
+const KNOWN_GROUP_FILTER_KEYS = {
+    "224.0.0.1": ["IGMP"], "224.0.0.2": ["IGMP"], "224.0.0.22": ["IGMP"],
+    "224.0.0.107": ["PTPv1", "PTPv2"], "224.0.1.129": ["PTPv1", "PTPv2"], "224.0.1.130": ["PTPv1", "PTPv2"],
+    "224.0.1.131": ["PTPv1", "PTPv2"], "224.0.1.132": ["PTPv1", "PTPv2"],
+    "224.0.0.230": ["Dante-ConMon"], "224.0.0.231": ["Dante-ConMon"], "224.0.0.232": ["Dante-ConMon"],
+    "224.0.0.233": ["Dante-ConMon"],
+    "224.0.0.251": ["mDNS"], "224.0.0.252": ["LLMNR"], "239.255.255.250": ["SSDP"], "239.255.255.255": ["SAP"],
+    "239.254.3.3": ["Multicast-Other"] // Dante の PTP ログはポート 9998 で、バックエンドは未分類として扱う
+};
+// グループの種類ごとのチェックボックス。「sACN or Dante」は両方外したときだけ隠す
+const KIND_FILTER_KEYS = {
+    "sacn": ["sACN"], "dante": ["Dante-Audio"], "aes67": ["AES67-Audio"],
+    "sacn-or-dante": ["sACN", "Dante-Audio"], "private": ["Multicast-Other"], "generic": ["Multicast-Other"]
+};
+
+/** 図に使うフィルタ条件。protos が null なら全種類を表示する。 */
+function mapFilter() {
+    const f = collectFilter();
+    const protos = f.protos === null ? null : new Set(f.protos);
+    const text = (f.text || "").trim().toLowerCase();
+    return { protos, text, active: protos !== null || text !== "" };
+}
+
+function nodeMatchesText(node, text) {
+    const title = node.title && node.title.textContent !== undefined ? node.title.textContent : String(node.title || "");
+    return [node.id, node.label, title].some(v => String(v || "").toLowerCase().includes(text));
+}
+
+function isGroupShownByFilter(ip, g, filter, drawReceivers) {
+    // IGMP を外すと受信側(Join)の線を描かないので、送信を観測していないグループは何も表示する物が無い
+    if (!drawReceivers && liveSenders(g).length === 0) return false;
+    if (filter.protos !== null) {
+        const keys = KNOWN_GROUP_FILTER_KEYS[ip] || KIND_FILTER_KEYS[groupKind(ip)] || ["Multicast-Other"];
+        if (!keys.some(k => filter.protos.has(k))) return false;
+    }
+    if (filter.text) {
+        const groupText = `${ip} ${getMulticastGroupLabel(ip)}`.toLowerCase();
+        if (groupText.includes(filter.text)) return true;
+        const hostIds = [...(drawReceivers ? g.members : []), ...liveSenders(g)];
+        return hostIds.some(h => {
+            const n = nodes.get(h);
+            return n ? nodeMatchesText(n, filter.text) : String(h).includes(filter.text);
+        });
+    }
+    return true;
+}
+
+// ------------------------------------------------------------------------------
+// ノードを選ぶと、つながる線とノードだけを強調し、ほかを薄くする
+// ------------------------------------------------------------------------------
+// 薄くした時の色。vis-network 9 はアイコン形のノードに opacity を効かせないため、色そのものを暗くする
+const DIM_ICON_COLOR = "rgba(100, 116, 139, 0.25)";
+const DIM_FONT_COLOR = "rgba(248, 250, 252, 0.2)";
+const DIM_EDGE_COLOR = "rgba(148, 163, 184, 0.06)";
+const NODE_FONT_COLOR = "#f8fafc"; // initTopology の nodes.font.color と同じ
+let focusId = null;
+const dimmedEdges = new Map(); // edge id -> 薄くする前の color
+
+function setFocus(nodeId) {
+    focusId = nodeId;
+    applyFocus();
+}
+
+/**
+ * 強調の状態を DataSet に反映する。描き直しの後にも呼ぶ。
+ * 描き直しで作り直したノードは dimmed:false になるので、ここで必要なら薄くし直す。
+ */
+function applyFocus() {
+    if (!network) return;
+    const focused = focusId !== null ? nodes.get(focusId) : null;
+    if (focusId !== null && (!focused || focused.hidden)) focusId = null; // 選んでいたノードが消えた/隠れた
+    const keepNodes = new Set();
+    const keepEdges = new Set();
+    if (focusId !== null) {
+        keepNodes.add(focusId);
+        network.getConnectedNodes(focusId).forEach(id => keepNodes.add(id));
+        network.getConnectedEdges(focusId).forEach(id => keepEdges.add(id));
+    }
+    const nodeUpdates = [];
+    nodes.forEach(n => {
+        const dim = focusId !== null && !keepNodes.has(n.id);
+        if (dim && !n.dimmed) {
+            nodeUpdates.push({
+                id: n.id, dimmed: true, undimmed: { icon: n.icon },
+                icon: { ...n.icon, color: DIM_ICON_COLOR }, font: { color: DIM_FONT_COLOR }
+            });
+        } else if (!dim && n.dimmed && n.undimmed) {
+            nodeUpdates.push({ id: n.id, dimmed: false, icon: n.undimmed.icon, font: { color: NODE_FONT_COLOR } });
+        }
+    });
+    const edgeUpdates = [];
+    edges.forEach(e => {
+        const dim = focusId !== null && !keepEdges.has(e.id);
+        if (dim && !dimmedEdges.has(e.id)) {
+            dimmedEdges.set(e.id, e.color);
+            edgeUpdates.push({ id: e.id, color: { color: DIM_EDGE_COLOR } });
+        } else if (!dim && dimmedEdges.has(e.id)) {
+            edgeUpdates.push({ id: e.id, color: dimmedEdges.get(e.id) });
+            dimmedEdges.delete(e.id);
+        }
+    });
+    dimmedEdges.forEach((_, id) => { if (!edges.get(id)) dimmedEdges.delete(id); });
+    if (nodeUpdates.length) nodes.update(nodeUpdates);
+    if (edgeUpdates.length) edges.update(edgeUpdates);
 }
 
 // ------------------------------------------------------------------------------
@@ -608,12 +927,17 @@ function handleNetworkEvent(data) {
             updateNode(srcIp, deviceName, "host", subtitle);
             
             // グループへの参加をモデルに記録(グループ/まとめノードと線は renderGroups が描く)
-            groupJoin(srcIp, groupIp, STR.groupTitle(groupIp));
+            groupJoin(srcIp, groupIp, STR.groupTitle(groupIp), requestedSources(data), data.record_type);
         }
 
         // A-3. 受信停止（リーブ）
         else if (data.event_code === "igmp_leave") {
             groupLeave(srcIp, groupIp);
+        }
+
+        // A-4. IGMPv3 の送信元の取り消し(BLOCK_OLD_SOURCES)
+        else if (data.event_code === "igmp_source_update" && data.record_type === "BLOCK_OLD_SOURCES") {
+            groupBlockSources(srcIp, groupIp, data.sources || []);
         }
     }
 
@@ -625,7 +949,8 @@ function handleNetworkEvent(data) {
         
         // 共通同期グループにエッジを紐付け
         // PTPメッセージ自体がこのグループ宛てのデータ面パケットなので「観測あり」とする
-        groupJoin(srcIp, groupIp, STR.ptpGroupTitle(groupIp));
+        // PTP クロックはこのグループへ送信しているので、送信元として記録する
+        recordSender(srcIp, groupIp, STR.ptpGroupTitle(groupIp));
         markGroupDataSeen(groupIp);
     }
 
@@ -773,8 +1098,10 @@ function renderFlowStats(flows) {
     const tbody = document.getElementById("flow-list-body");
     if (!tbody) return;
     tbody.innerHTML = "";
-    setBadge("badge-flow", flows.length || null);
-    flows.slice(0, 50).forEach(f => {
+    // 表はフィルタに合うフローだけ(図は全件から描く)
+    const shownFlows = flows.filter(f => f.match !== false);
+    setBadge("badge-flow", shownFlows.length || null);
+    shownFlows.slice(0, 50).forEach(f => {
         const row = document.createElement("tr");
         const host = f.resolved_name ? `${f.resolved_name} (${f.src_ip})` : f.src_ip;
         [f.proto, host, f.group_ip, f.pps, (f.bps / 1000).toFixed(0) + " kbps"].forEach(v => {
@@ -783,11 +1110,19 @@ function renderFlowStats(flows) {
             row.appendChild(td);
         });
         tbody.appendChild(row);
-        // 音声を流している送信元をトポロジ上にも端末として出す
-        updateNode(f.src_ip, f.resolved_name || f.src_ip, "host", `IP: ${f.src_ip}\nMAC: ${f.src_mac}`);
     });
-    // 表示上限(50件)に関係なく、届いた全フローでグループの観測状態を更新する
-    flows.forEach(f => markGroupDataSeen(f.group_ip, f.proto));
+    // 表示上限(50件)に関係なく、届いた全フローで送信元とグループの観測状態を更新する
+    flows.forEach(f => {
+        // 送信元をトポロジ上にも端末として出す(毎秒の更新で揺らさないよう、未登録の時だけ追加する)
+        const existing = nodes.get(f.src_ip);
+        const nameKnownLater = existing && existing.customType === "host" && f.resolved_name
+            && !String(existing.label).startsWith(f.resolved_name);
+        if (!existing || nameKnownLater) {
+            updateNode(f.src_ip, f.resolved_name || f.src_ip, "host", `IP: ${f.src_ip}\nMAC: ${f.src_mac}`);
+        }
+        recordSender(f.src_ip, f.group_ip, STR.groupTitle(f.group_ip));
+        markGroupDataSeen(f.group_ip, f.proto);
+    });
 }
 
 // ------------------------------------------------------------------------------
@@ -993,7 +1328,12 @@ function renderQuerierStatus(s) {
     }
     // Queryは届くのに他の端末のReportが届かない: ミラーではない通常ポートの可能性を知らせる
     const hint = document.getElementById("report-visibility");
-    if (hint) hint.hidden = !s.reports_hidden;
+    const seenOthers = (s.reports_seen || 0) > 0;
+    if ((hint && hint.hidden !== !s.reports_hidden) || seenOthers !== othersReportsSeen) {
+        if (hint) hint.hidden = !s.reports_hidden;
+        othersReportsSeen = seenOthers;
+        scheduleGroupRender(); // 受信者なしの警告は、Join が見えるかどうかで出し分けている
+    }
     // 常設のPassive注記も、診断が出ている間だけ黄色にして原因(Joinしない受動監視)と結び付ける
     const passive = document.getElementById("passive-status");
     if (passive) passive.classList.toggle("warn", !!s.reports_hidden);
@@ -1096,8 +1436,8 @@ function connectWebSocket() {
             // 1. トポロジマップの更新
             handleNetworkEvent(data);
             
-            // 2. 画面ログ行の追加
-            addStreamingLog(data);
+            // 2. 画面ログ行の追加(フィルタに合わない IGMP は図の更新用に届くだけなのでログに出さない)
+            if (data.log !== false) addStreamingLog(data);
         } catch (e) {
             console.error("メッセージ受信パースエラー:", e);
         }
@@ -1125,7 +1465,7 @@ function updateNicDropdown(nics, activeIndex) {
     if (!selector) return;
 
     selector.innerHTML = "";
-    
+
     if (!nics || nics.length === 0) {
         const opt = document.createElement("option");
         opt.value = "";
@@ -1168,10 +1508,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // フィルタ変更 ➔ サーバーへ送信(テキスト入力は連打を避けるため300msデバウンス)
     let filterTimer = null;
-    document.querySelectorAll("#filter-protos input, #filter-raw").forEach(el => el.addEventListener("change", sendFilter));
+    document.querySelectorAll("#filter-protos input, #filter-raw").forEach(el => el.addEventListener("change", () => {
+        sendFilter();
+        scheduleGroupRender(); // 図も同じ条件に合わせる
+    }));
     document.getElementById("filter-text").addEventListener("input", () => {
         clearTimeout(filterTimer);
-        filterTimer = setTimeout(sendFilter, 300);
+        filterTimer = setTimeout(() => {
+            sendFilter();
+            scheduleGroupRender();
+        }, 300);
     });
     document.getElementById("btn-export").addEventListener("click", requestExport);
 

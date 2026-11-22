@@ -57,9 +57,12 @@ Try the UI without any hardware: `python scripts/demo_simulator.py` replays a sa
 ### 3.1 Top bar
 
 - **Protocol check boxes** (IGMP, PTPv1, PTPv2, mDNS, SSDP, SAP, LLMNR, Dante ConMon, Dante audio, sACN, AES67 audio, Other multicast):
-  choose what is sent to the screen. Filters are applied by the program itself; **everything is still recorded to PCAP**.
+  choose what is shown in the log, Stream stats and the map. Filters are applied by the program itself; **everything is
+  still recorded to PCAP**. On the map, unticking a kind hides its groups (a 239.255.x.x group not yet known to be sACN
+  or Dante is hidden only when both are unticked), and unticking *IGMP* hides the receiver (Join) lines.
 - **PTP types**: show only some PTP message types (for example only Announce).
-- **Filter box**: shows only traffic whose IP, MAC, group or device name contains the text.
+- **Filter box**: shows only traffic whose IP, MAC, group or device name contains the text. The map shows only the
+  matching groups and devices and what they are connected to.
 - **Show data plane per packet**: audio streams are normally summarized once per second; tick this to see each packet
   (use it together with a narrow filter).
 - **Export CSV** with optional time range (`YYYY-MM-DD HH:MM:SS`, local time) and the audio handling option.
@@ -98,6 +101,14 @@ Try the UI without any hardware: `python scripts/demo_simulator.py` replays a sa
   30 devices, devices in the same /24 subnet are drawn as one node. Queriers and PTP clocks are always shown on their own.
   Double-click a summary node to show what it contains; double-click one of those nodes to put them back together.
   The status bar says how many groups and devices are summarised.
+- **Senders**: an orange arrow from a device to a group means stream data from that device to the group was seen on this
+  port in the last few seconds. Blue lines without arrows are receivers (IGMP Join). Senders are known only when the stream
+  reaches this port (a mirror port); otherwise the group's tooltip says "Senders: unknown on this port", which does not mean
+  there is no sender. When a receiver asks for specific sources (IGMPv3), the tooltip lists them too.
+- **⚠ on a group**: more than one sender to the same group (check for a duplicate multicast address), or stream data with
+  no receiver's Join. The second check is made only when other devices' Joins are visible on this port (not while the
+  *No Join/Leave seen* chip is shown). Hover over the group for which one applies.
+- **Click a node** to highlight it and what it is connected to; everything else is dimmed. Click an empty area to clear.
 
 ## 4. Typical tasks
 

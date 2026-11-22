@@ -308,8 +308,12 @@ class TestUiFilter(unittest.IsolatedAsyncioTestCase):
             self.server.send_event({"proto": "IGMP", "event": "x", "src_ip": "192.168.1.10", "group_ip": "239.1.1.1"})            # プロトコル不一致
             self.server.send_event({"proto": "PTP", "plane": "data", "src_ip": "192.168.1.10", "group_ip": "224.0.1.129"})        # raw_data=False
             msgs = await self._recv_all(client)
-            self.assertEqual(len(msgs), 1)
-            self.assertEqual(msgs[0]["src_ip"], "192.168.1.10")
+            logged = [m for m in msgs if m.get("log") is not False]
+            self.assertEqual(len(logged), 1)
+            self.assertEqual(logged[0]["src_ip"], "192.168.1.10")
+            # IGMP は図の更新用に、ログに出さない印(log=False)を付けて届く。IGMP 以外の不一致は届かない
+            hidden = [m for m in msgs if m.get("log") is False]
+            self.assertEqual([m["proto"] for m in hidden], ["IGMP"])
 
             # raw_data を有効にするとデータ面も個別に届く
             await client.send(json.dumps({"action": "set_filter", "protos": ["PTP"], "text": "", "raw_data": True}))
@@ -331,8 +335,11 @@ class TestUiFilter(unittest.IsolatedAsyncioTestCase):
             msgs = await self._recv_all(client)
             self.assertEqual(len(msgs), 1)
             self.assertEqual(msgs[0]["type"], "flow_stats")
-            self.assertEqual([f["src_ip"] for f in msgs[0]["flows"]], ["10.0.0.1"])
-            self.assertEqual(msgs[0]["flows"][0]["proto"], "Dante-Audio")
+            # 図のために全件が届き、フィルタへの一致は match で示される
+            flows = msgs[0]["flows"]
+            self.assertEqual(len(flows), 3)
+            matched = [f for f in flows if f["match"]]
+            self.assertEqual([(f["src_ip"], f["proto"]) for f in matched], [("10.0.0.1", "Dante-Audio")])
 
     async def test_rate_limit_drops_excess_but_never_igmp(self) -> None:
         state = ClientState()

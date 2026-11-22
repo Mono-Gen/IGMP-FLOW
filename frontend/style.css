@@ -469,6 +469,19 @@ header {
     border: 1px solid rgba(236, 72, 153, 0.3);
 }
 
+/* 送信元 → グループの線(app.js の EDGE_STYLES.sender と同じ色) */
+.icon-sender {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.icon-warn {
+    background: rgba(234, 179, 8, 0.15);
+    color: #eab308;
+    border: 1px solid rgba(234, 179, 8, 0.3);
+}
+
 /* 未確定(疑問符)は Join だけで判断するのでデータ未観測。図では灰色になるので凡例も灰色にする */
 .icon-unsure {
     background: rgba(100, 116, 139, 0.15);

@@ -47,6 +47,18 @@ const STR = {
         `Joined by ${hosts} device(s). Stream data seen on this port: ${seen} group(s).\n` +
         `Shown as one node because there are many groups. Double-click to show each group.`,
     familyCollapseHint: "Double-click to group these again.",
+    // Senders and receivers of a group. Senders are known only when stream data reaches this port.
+    groupSenders: (list) => `Senders (stream data seen): ${list}`,
+    groupSendersUnknown: "Senders: unknown on this port (stream data does not reach it)",
+    groupRequestedSources: (list) => `Sources requested by receivers (IGMPv3): ${list}`,
+    groupReceivers: (n) => `Receivers (Join seen): ${n}`,
+    groupMultiSender: "⚠ More than one sender: check for a duplicate multicast address",
+    groupNoReceiver: "⚠ Stream data arrives, but no receiver's Join is seen",
+    familySenders: (n) => `Senders (stream data seen): ${n} device(s)`,
+    familyMultiSender: (n) => `⚠ ${n} group(s) with more than one sender`,
+    familyNoReceiver: (n) => `⚠ ${n} group(s) with stream data but no receiver's Join`,
+    andMore: (n) => `and ${n} more`,
+    warnMark: "⚠ ",
     // Summary nodes that stand for many devices in one /24 subnet
     subnetLabel: (subnet, n) => `${subnet}\n${n} devices`,
     subnetTitle: (subnet, n) =>
