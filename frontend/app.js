@@ -163,20 +163,20 @@ function groupKindLabel(ip) {
 
 // アイコン定義マッピング (FontAwesome 6 Unicode)
 const ICONS = {
-    querier: { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf521", color: "#8b5cf6", size: 45 }, // 👑 (Crown)
-    group: { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf519", color: "#10b981", size: 40 },   // 配信されるストリーム (tower-broadcast)
-    family: { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf5fd", color: "#10b981", size: 54 }, // まとめ (layer-group)
-    subnet: { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf233", color: "#3b82f6", size: 48 },  // 端末のまとめ (server)
+    querier: { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf521", color: "#c084fc", size: 45 }, // 👑 (Crown)
+    group: { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf519", color: "#4ade80", size: 40 },   // 配信されるストリーム (tower-broadcast)
+    family: { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf5fd", color: "#86efac", size: 54 }, // まとめ (layer-group)
+    subnet: { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf233", color: "#60a5fa", size: 48 },  // 端末のまとめ (server)
     host: { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf109", color: "#3b82f6", size: 36 },     // 💻 (Laptop)
-    sync: { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf017", color: "#f59e0b", size: 38 }      // ⏰ (Clock)
+    sync: { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf017", color: "#e2e8f0", size: 38 }      // ⏰ (Clock)
 };
 
 // グループの種類ごとのアイコン。色だけに頼らないよう形も変える(色覚の違いでも区別できるように)
 const GROUP_KIND_ICONS = {
-    "sacn": { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf0eb", color: "#f59e0b", size: 40 },          // 照明 (lightbulb)
-    "dante": { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf028", color: "#ef4444", size: 40 },         // 音声 (volume-high)
-    "aes67": { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf83e", color: "#ec4899", size: 40 },         // 音声 (wave-square)
-    "sacn-or-dante": { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf059", color: "#a78bfa", size: 40 }, // 未確定 (circle-question)
+    "sacn": { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf0eb", color: "#fde047", size: 40 },          // 照明 (lightbulb)
+    "dante": { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf028", color: "#22d3ee", size: 40 },         // 音声 (volume-high)
+    "aes67": { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf83e", color: "#f472b6", size: 40 },         // 音声 (wave-square)
+    "sacn-or-dante": { face: '"Font Awesome 6 Free"', weight: "900", code: "\uf059", color: "#94a3b8", size: 40 }, // 未確定 (circle-question)
     "private": ICONS.group,
     "generic": ICONS.group
 };
@@ -539,13 +539,13 @@ function renderGroups() {
             return;
         }
         wantNodes.set(ip, groupNodeData(ip, g, senders, status));
-        if (drawReceivers) g.members.forEach(h => wantEdges.set(`${shown(h)}_to_${ip}`, { from: shown(h), to: ip, kind: "receiver" }));
+        if (drawReceivers) g.members.forEach(h => addReceiverEdge(wantEdges, shown(h), ip));
         senders.forEach(h => wantEdges.set(`${shown(h)}_src_${ip}`, { from: shown(h), to: ip, kind: "sender" }));
     });
 
     families.forEach((f, key) => {
         wantNodes.set(key, familyNodeData(key, f));
-        if (drawReceivers) f.members.forEach(h => wantEdges.set(`${shown(h)}_to_${key}`, { from: shown(h), to: key, kind: "receiver" }));
+        if (drawReceivers) f.members.forEach(h => addReceiverEdge(wantEdges, shown(h), key));
         f.senders.forEach(h => wantEdges.set(`${shown(h)}_src_${key}`, { from: shown(h), to: key, kind: "sender" }));
     });
 
@@ -553,7 +553,7 @@ function renderGroups() {
     const queriers = nodes.get({ filter: (n) => n.customType === "querier" });
     if (drawReceivers) {
         queriers.forEach(q => {
-            wantNodes.forEach((_, id) => wantEdges.set(`${q.id}_to_${id}`, { from: q.id, to: id, label: "Query", kind: "query" }));
+            wantNodes.forEach((_, id) => wantEdges.set(`${q.id}_to_${id}`, { from: q.id, to: id, kind: "query" }));
         });
     }
 
@@ -588,12 +588,18 @@ function renderGroups() {
     renderedSignature.forEach((_, id) => { if (!wantNodes.has(id)) renderedSignature.delete(id); });
     if (changed.length) nodes.update(changed);
     const addEdges = [];
+    const widthUpdates = [];
     wantEdges.forEach((e, id) => {
-        if (!edges.get(id)) {
-            addEdges.push({ id, from: e.from, to: e.to, label: e.label || "", groupEdge: true, ...EDGE_STYLES[e.kind] });
+        const width = edgeWidth(e);
+        const existing = edges.get(id);
+        if (!existing) {
+            addEdges.push({ id, from: e.from, to: e.to, label: e.label || "", groupEdge: true, ...EDGE_STYLES[e.kind], width });
+        } else if (existing.width !== width) {
+            widthUpdates.push({ id, width });
         }
     });
     if (addEdges.length) edges.add(addEdges);
+    if (widthUpdates.length) edges.update(widthUpdates);
 
     renderGroupSummary(families, subnets);
     applyFocus();
@@ -602,15 +608,37 @@ function renderGroups() {
 // フィルタで隠す対象になるノードの種類(グループとまとめノードは renderGroups が作り直す)
 const FILTERABLE_TYPES = ["host", "querier", "sync"];
 
-// 線の種類ごとの見た目。送信(データ)は矢印付きのオレンジで、受信(Join)の青と見分けられるようにする
+// 配色(2026-11-23 見直し): 送信矢印のオレンジ、sACN の黄、PTP クロックの白銀を分け、Dante はエラーの赤と紛れないシアンにした。
+// どの色も地図の背景(#0f1521)に対してコントラスト比 3:1 以上(非テキストの WCAG 基準)。
+// 線の種類ごとの見た目。送信(データ)は矢印付きのオレンジで、受信(Join)の青と見分けられるようにする。
+// クエリアとグループの線は補助情報なので、細い紫(クエリアの王冠と同じ色)の点線にする
 const EDGE_STYLES = {
-    receiver: { font: { color: "#94a3b8", size: 10, align: "middle" }, color: { color: "rgba(59, 130, 246, 0.4)" } },
-    query: { font: { color: "#94a3b8", size: 10, align: "middle" }, color: { color: "rgba(59, 130, 246, 0.4)" } },
+    receiver: { color: { color: "rgba(96, 165, 250, 0.6)" } },
+    query: { color: { color: "rgba(192, 132, 252, 0.6)" }, dashes: [4, 6] },
     sender: {
-        color: { color: "rgba(245, 158, 11, 0.85)" }, width: 2.5,
+        color: { color: "rgba(249, 115, 22, 0.92)" },
         arrows: { to: { enabled: true, scaleFactor: 0.7 } }
     }
 };
+
+// 線の太さ。受信線は、まとめノードが何台分の受信機を表すかに応じて太くする(1 台=2、50 台≒7、上限 8)。
+// 対数にしたのは、台数がそのまま太さになると数十台で他の線が見えなくなるため
+const EDGE_WIDTH_BASE = 2;
+const EDGE_WIDTH_MAX = 8;
+function edgeWidth(e) {
+    if (e.kind === "query") return 1;
+    if (e.kind === "sender") return 2.5;
+    const n = e.count || 1;
+    return Math.min(EDGE_WIDTH_MAX, EDGE_WIDTH_BASE + Math.log2(n) * 1.3);
+}
+
+/** 受信線を 1 本にまとめ、何台分かを数える(同じまとめノードの複数台は 1 本の線になる)。 */
+function addReceiverEdge(wantEdges, from, to) {
+    const id = `${from}_to_${to}`;
+    const e = wantEdges.get(id);
+    if (e) e.count += 1;
+    else wantEdges.set(id, { from, to, kind: "receiver", count: 1 });
+}
 
 /**
  * グループの警告状態。
@@ -841,9 +869,9 @@ function isGroupShownByFilter(ip, g, filter, drawReceivers) {
 // ノードを選ぶと、つながる線とノードだけを強調し、ほかを薄くする
 // ------------------------------------------------------------------------------
 // 薄くした時の色。vis-network 9 はアイコン形のノードに opacity を効かせないため、色そのものを暗くする
-const DIM_ICON_COLOR = "rgba(100, 116, 139, 0.25)";
-const DIM_FONT_COLOR = "rgba(248, 250, 252, 0.2)";
-const DIM_EDGE_COLOR = "rgba(148, 163, 184, 0.06)";
+const DIM_ICON_COLOR = "rgba(100, 116, 139, 0.38)";
+const DIM_FONT_COLOR = "rgba(248, 250, 252, 0.28)";
+const DIM_EDGE_COLOR = "rgba(148, 163, 184, 0.14)";
 const NODE_FONT_COLOR = "#f8fafc"; // initTopology の nodes.font.color と同じ
 let focusId = null;
 const dimmedEdges = new Map(); // edge id -> 薄くする前の color
@@ -904,7 +932,7 @@ function applyFocus() {
 // 集計は1秒間隔(UI_AGGREGATE_INTERVAL_SECONDS)。数回の取りこぼしで表示が揺れないよう余裕を持たせる
 const GROUP_DATA_STALE_MS = 5000;
 const groupDataLastSeen = new Map(); // group_ip -> 最後にデータ面パケットを観測した時刻(ms)
-const GROUP_COLOR_NO_DATA = "#64748b"; // 未観測は異常ではないので赤・黄ではなく灰色にする
+const GROUP_COLOR_NO_DATA = "#94a3b8"; // 未観測は異常ではないので赤・黄ではなく灰色にする
 
 function markGroupDataSeen(groupIp, proto) {
     if (!groupIp) return;
