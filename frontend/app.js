@@ -96,8 +96,8 @@ function initTopology() {
     });
 
     // 利用者が自分で拡大・移動したら、自動の全体表示はやめる(操作を上書きしないため)
-    network.on("zoom", () => { autoFitUntil = 0; });
-    network.on("dragStart", (params) => { if (!params.nodes || !params.nodes.length) autoFitUntil = 0; });
+    network.on("zoom", cancelAutoFit);
+    network.on("dragStart", (params) => { if (!params.nodes || !params.nodes.length) cancelAutoFit(); });
 
     // Webフォントのロード完了時にトポロジを再描画する(アイコンが文字化けして見えるのを防ぐ)
     if (document.fonts) {
@@ -544,6 +544,8 @@ function renderGroups() {
             if (byProto || byText || byIgmp) filteredOut.add(n.id);
         });
     }
+    lastVisibleGroups = new Set(visible);
+    lastFilteredOut = filteredOut;
     const collapsed = collapsedFamilyKeys(visible);
     // 送信中の機器は、クエリアやクロックと同じく常に個別に表示する(受信機だけをまとめる)
     const activeSenders = new Set();
@@ -608,6 +610,7 @@ function renderGroups() {
         subnets.get(k).push(id);
     });
     subnets.forEach((ids, k) => wantNodes.set(k, subnetNodeData(k, ids)));
+    lastSubnets = subnets;
     // 隠す端末: まとめた端末と、フィルタに合わない端末
     const isHidden = (id) => hostMap.has(id) || filteredOut.has(id);
     const hostVisibility = nodes.get({ filter: (n) => FILTERABLE_TYPES.includes(n.customType) && Boolean(n.hidden) !== isHidden(n.id) })
@@ -683,7 +686,17 @@ const familyGroups = new Map();
 // ツールチップはマウスを動かすと消えるため、送信元・受信機の一覧を読み比べられるよう固定のパネルに出す。
 // 内容は描き直しのたびに更新する(送信が止まった等の変化を追う)。
 // ------------------------------------------------------------------------------
-const DETAIL_LIST_MAX = 50; // 一覧に出す最大件数(多すぎるとパネルが長くなるため、残りは件数だけ示す)
+const DETAIL_LIST_MAX = 50;
+// 直前の描き直しの結果(表示中のグループ、フィルタで隠した機器、まとめた機器)
+let lastVisibleGroups = new Set();
+let lastFilteredOut = new Set();
+let lastSubnets = new Map();
+
+/** 一覧から移動できるか(フィルタで隠れたものは移動先が無いのでリンクにしない)。 */
+function isReachable(id) {
+    if (groupModel.has(id)) return lastVisibleGroups.has(id);
+    return !lastFilteredOut.has(id) && Boolean(nodes.get(id));
+} // 一覧に出す最大件数(多すぎるとパネルが長くなるため、残りは件数だけ示す)
 let detailId = null;
 
 function showDetail(id) {
@@ -713,8 +726,7 @@ function refreshDetail() {
         renderKeyList(body, STR.detailGroups, familyGroups.get(node.id) || []);
     } else if (node.customType === "subnet") {
         title.textContent = `${STR.detailSummary}: ${firstLine}`;
-        const ids = nodes.get({ filter: (n) => n.customType === "host" && hostSubnetKey(n.id) === node.id }).map(n => n.id);
-        renderHostList(body, STR.detailDevices, ids);
+        renderHostList(body, STR.detailDevices, lastSubnets.get(node.id) || []);
     } else {
         const kind = node.customType === "querier" ? STR.detailQuerier : node.customType === "sync" ? STR.detailClock : STR.detailDevice;
         title.textContent = `${kind}: ${firstLine}`;
@@ -785,6 +797,13 @@ function renderKeyList(body, heading, keys) {
 }
 
 function detailLink(text, id) {
+    if (!isReachable(id)) {
+        const span = document.createElement("span");
+        span.className = "name muted";
+        span.textContent = text;
+        span.title = STR.detailFiltered;
+        return span;
+    }
     const a = document.createElement("button");
     a.type = "button";
     a.className = "detail-link name";
@@ -796,6 +815,7 @@ function detailLink(text, id) {
 /** 一覧から選んだノードへ移動する。まとめの中にあれば開く。 */
 function goToNode(id) {
     if (!network) return;
+    cancelAutoFit();
     if (!nodes.get(id) || nodes.get(id).hidden) {
         const fam = groupModel.has(id) ? groupFamily(id).key : hostSubnetKey(id);
         if (fam) {
@@ -805,7 +825,6 @@ function goToNode(id) {
     }
     const n = nodes.get(id);
     if (!n || n.hidden) return;
-    autoFitUntil = 0;
     network.focus(id, { scale: 1.2, animation: { duration: 400 } });
     network.selectNodes([id]);
     setFocus(id);
@@ -822,7 +841,8 @@ function renderGroupDetail(body, key) {
     const g = groupModel.get(key);
     if (!g) return;
     const vlan = vlanOf(key);
-    addLine(body, `${STR.detailKind}: ${groupKindLabel(key)}`);
+    const known = MULTICAST_LABELS[ipOf(key)];
+    addLine(body, `${STR.detailKind}: ${known ? known.tag : groupKindLabel(key)}`);
     if (vlan !== null) addLine(body, `${STR.detailVlan}: ${vlan}`);
     addLine(body, `${STR.detailData}: ${isGroupDataSeen(key) ? STR.detailDataSeen : STR.detailDataNotSeen}`);
     const senders = liveSenders(g);
@@ -877,7 +897,18 @@ function noteLayoutChange(force = false) {
     if (autoFitUntil === -1 && count > 0) autoFitUntil = Date.now() + AUTO_FIT_WINDOW_MS;
     if (!force && !(changed && autoFitUntil > Date.now())) return;
     clearTimeout(autoFitTimer);
-    autoFitTimer = setTimeout(() => { if (network) network.fit({ animation: { duration: 400 } }); }, AUTO_FIT_DELAY_MS);
+    autoFitTimer = setTimeout(() => {
+        autoFitTimer = null;
+        // 待っている間に利用者が操作した(autoFitUntil=0)なら、まとめの開閉でも上書きしない
+        if (network && (autoFitUntil > Date.now() || (force && autoFitUntil !== 0))) network.fit({ animation: { duration: 400 } });
+    }, AUTO_FIT_DELAY_MS);
+}
+
+/** 利用者が自分で拡大・移動・移動先を選んだら、自動の全体表示をやめる(予約済みのものも取り消す)。 */
+function cancelAutoFit() {
+    autoFitUntil = 0;
+    clearTimeout(autoFitTimer);
+    autoFitTimer = null;
 }
 
 // フィルタで隠す対象になるノードの種類(グループとまとめノードは renderGroups が作り直す)
@@ -1054,7 +1085,7 @@ function compareIp(a, b) {
 // ⚠ の付いたグループの件数。押すと次のグループへ移動して強調し、詳細を開く(まとめの中なら開く)
 // ------------------------------------------------------------------------------
 let warnedGroups = [];
-let warnCursor = 0;
+let lastWarnKey = null; // ⚠ のチップで最後に移動したグループ
 
 function renderWarnSummary(keys) {
     warnedGroups = keys.slice().sort();
@@ -1066,8 +1097,12 @@ function renderWarnSummary(keys) {
 
 function goToNextWarning() {
     if (!warnedGroups.length || !network) return;
-    const key = warnedGroups[warnCursor % warnedGroups.length];
-    warnCursor += 1;
+    cancelAutoFit();
+    // 5. 直前に移動したグループの次へ(一覧が変わっても飛ばしたり繰り返したりしない)
+    const prev = lastWarnKey === null ? -1 : warnedGroups.indexOf(lastWarnKey);
+    const key = prev >= 0 ? warnedGroups[(prev + 1) % warnedGroups.length]
+        : warnedGroups.find(k => lastWarnKey === null || k > lastWarnKey) || warnedGroups[0];
+    lastWarnKey = key;
     // まとめノードの中にあれば、その系統を開いてから移動する
     const fam = groupFamily(key);
     if (!nodes.get(key) && nodes.get(fam.key)) {
@@ -1075,7 +1110,6 @@ function goToNextWarning() {
         renderGroups();
     }
     if (!nodes.get(key)) return;
-    autoFitUntil = 0; // 移動した位置を自動の全体表示で上書きしない
     network.focus(key, { scale: 1.2, animation: { duration: 400 } });
     network.selectNodes([key]);
     setFocus(key);
@@ -1112,7 +1146,7 @@ function toggleFamily(nodeId) {
         return;
     }
     renderGroups();
-    noteLayoutChange(true);
+    if (autoFitUntil !== 0) noteLayoutChange(true);
 }
 
 /** 画面の初期化(リセット/NIC切替)でグループの状態も捨てる。 */
@@ -1128,7 +1162,8 @@ function resetGroupModel() {
     querierVlans.clear();
     autoFitUntil = -1;
     lastNodeCount = 0;
-    warnCursor = 0;
+    lastWarnKey = null;
+    renderWarnSummary([]); // 4. リセット直後に古い件数を残さない
     showDetail(null);
     familyGroups.clear();
     focusId = null;
@@ -1222,7 +1257,10 @@ function setFocus(nodeId) {
 function applyFocus() {
     if (!network) return;
     const focused = focusId !== null ? nodes.get(focusId) : null;
-    if (focusId !== null && (!focused || focused.hidden)) focusId = null; // 選んでいたノードが消えた/隠れた
+    if (focusId !== null && (!focused || focused.hidden)) {
+        focusId = null; // 選んでいたノードが消えた/隠れた
+        network.unselectAll();
+    }
     const keepNodes = new Set();
     const keepEdges = new Set();
     if (focusId !== null) {

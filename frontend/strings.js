@@ -84,6 +84,7 @@ const STR = {
     detailVlans: "Queries seen in",
     detailNone: "none",
     detailMore: (n) => `and ${n} more`,
+    detailFiltered: "Hidden by the current filter",
     copy: "Copy",
     copied: "Copied",
     // Summary nodes that stand for many devices in one /24 subnet
