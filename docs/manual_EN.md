@@ -161,9 +161,9 @@ Command line options of the app: `-i/--interface`, `--interactive`, `-p/--port`,
 |---|---|
 | "Npcap is not installed" at start | Install Npcap (section 1.2) and restart |
 | NIC list empty, or nothing is captured | Run as administrator; check Npcap is installed; select the NIC connected to the mirror port; confirm the mirror is configured on the switch |
-| The map is a dense ball of labels | Update to 0.2.2 or later: many groups and devices are then drawn as summary nodes |
-| "Multiple queriers" on a network with several VLANs | Since 0.2.2 this appears only for more than one querier in the same VLAN (or, without VLAN tags, the same /24). See section 10 |
-| A lighting (sACN) network shows "Dante" | Fixed in 0.2.2: sACN and Dante are told apart by UDP port. A group seen only by its Join shows "sACN universe N or Dante" |
+| The map is a dense ball of labels | Update to 0.3.0 or later: many groups and devices are then drawn as summary nodes |
+| "Multiple queriers" on a network with several VLANs | Since 0.3.0 this appears only for more than one querier in the same VLAN (or, without VLAN tags, the same /24). See section 10 |
+| A lighting (sACN) network shows "Dante" | Fixed in 0.3.0: sACN and Dante are told apart by UDP port. A group seen only by its Join shows "sACN universe N or Dante" |
 | A group is on the map but grey / missing from Stream stats | Normal on a non-mirror port with IGMP snooping: IGMP-FLOW does not join, so the switch does not forward the stream here. Use a mirror (SPAN) port to see the stream itself |
 | "No Join/Leave seen" chip | The PC is on a normal port of a snooping switch. Mirror the uplink to the querier (or the devices' ports) to this PC's port |
 | Only this PC's traffic is visible | The port is not a mirror (SPAN) port, or the NIC is a virtual adapter |
