@@ -64,7 +64,7 @@ const STR = {
     subnetTitle: (subnet, n) =>
         `${n} devices in ${subnet}\n` +
         `Shown as one node because there are many devices. Double-click to show each device.\n` +
-        `Queriers and PTP clocks are always shown individually.`,
+        `Queriers, PTP clocks and devices sending stream data are always shown individually.`,
     groupSummary: (n, f) => `${n} groups in ${f} summary node(s)`,
     hostSummary: (n, f) => `${n} devices in ${f} summary node(s)`,
     summaryExpandHint: "double-click one to expand",

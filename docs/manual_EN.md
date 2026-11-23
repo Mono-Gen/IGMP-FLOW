@@ -59,7 +59,8 @@ Try the UI without any hardware: `python scripts/demo_simulator.py` replays a sa
 - **Protocol check boxes** (IGMP, PTPv1, PTPv2, mDNS, SSDP, SAP, LLMNR, Dante ConMon, Dante audio, sACN, AES67 audio, Other multicast):
   choose what is shown in the log, Stream stats and the map. Filters are applied by the program itself; **everything is
   still recorded to PCAP**. On the map, unticking a kind hides its groups (a 239.255.x.x group not yet known to be sACN
-  or Dante is hidden only when both are unticked), and unticking *IGMP* hides the receiver (Join) lines.
+  or Dante is hidden only when both are unticked), and unticking *IGMP* hides the receiver (Join) lines. A device is hidden
+  when none of the protocols it was seen using is ticked and none of the groups it is connected to is shown.
 - **PTP types**: show only some PTP message types (for example only Announce).
 - **Filter box**: shows only traffic whose IP, MAC, group or device name contains the text. The map shows only the
   matching groups and devices and what they are connected to.
@@ -98,7 +99,8 @@ Try the UI without any hardware: `python scripts/demo_simulator.py` replays a sa
   ("sACN universe N or Dante") until its stream data is seen on this port.
 - **Summary nodes**: when there are more than 40 groups, groups in the same address range (for example the sACN/Dante range of 239.255.x.x)
   are drawn as one node that shows how many groups it holds and how many have stream data. When there are more than
-  30 devices, devices in the same /24 subnet are drawn as one node. Queriers and PTP clocks are always shown on their own.
+  30 devices, devices in the same /24 subnet are drawn as one node. Queriers, PTP clocks and devices that are sending stream
+  data are always shown on their own, so you can see who sends.
   Double-click a summary node to show what it contains; double-click one of those nodes to put them back together.
   The status bar says how many groups and devices are summarised.
 - **Senders**: an orange arrow from a device to a group means stream data from that device to the group was seen on this

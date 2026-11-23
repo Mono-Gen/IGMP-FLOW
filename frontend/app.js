@@ -302,6 +302,19 @@ function isGroupDataSeen(groupIp) {
 // (querier_status.reports_seen。NIC 切替でリセットされる)。受信者のいないストリームの警告は、これが真のときだけ出す
 let othersReportsSeen = false;
 
+// 機器ID -> その機器から観測したプロトコル(チェックボックスの値: IGMP / mDNS / sACN / PTPv1 ...)。
+// どのグループにもつながらない機器(mDNS だけの機器、送信が止まった送信元など)を、チェックで隠すために使う
+const hostProtos = new Map();
+function noteHostProto(hostId, key) {
+    if (!hostId || !key) return;
+    if (!hostProtos.has(hostId)) hostProtos.set(hostId, new Set());
+    const set = hostProtos.get(hostId);
+    if (!set.has(key)) {
+        set.add(key);
+        scheduleGroupRender();
+    }
+}
+
 function ensureGroup(groupIp, title) {
     let g = groupModel.get(groupIp);
     if (!g) {
@@ -430,15 +443,17 @@ function hostSubnetKey(id) {
 }
 
 /**
- * まとめて表示する端末を決める。クエリアと PTP クロックは役割が重要なので常に個別に出す。
+ * まとめて表示する端末を決める。クエリア・PTP クロック・送信中の機器は役割が重要なので常に個別に出す。
+ * hidden(フィルタで隠す機器)はしきい値の台数にも含めない。keepIndividual(送信中の機器)は台数には含めるが、まとめない。
  * @returns {Map<string, string>} 端末ID -> サブネットのまとめキー
  */
-function collapsedHostMap(filteredOut) {
+function collapsedHostMap(hidden, keepIndividual) {
     const result = new Map();
-    const hosts = nodes.get({ filter: (n) => n.customType === "host" && !filteredOut.has(n.id) });
+    const hosts = nodes.get({ filter: (n) => n.customType === "host" && !hidden.has(n.id) });
     if (hosts.length <= HOST_COLLAPSE_THRESHOLD) return result;
     const bySubnet = new Map();
     hosts.forEach(h => {
+        if (keepIndividual.has(h.id)) return;
         const k = hostSubnetKey(h.id);
         if (!k) return;
         if (!bySubnet.has(k)) bySubnet.set(k, []);
@@ -476,24 +491,26 @@ function renderGroups() {
         if (drawReceivers) g.members.forEach(h => linkedHosts.add(h));
         liveSenders(g).forEach(h => linkedHosts.add(h));
     });
-    // フィルタで隠す端末: つながるグループがすべて隠れた端末と、文字列に合わない端末。
-    // どのグループにもつながらない端末(mDNS だけの機器など)は、プロトコルのチェックでは隠さない
-    const anyLinked = new Set();
-    groupModel.forEach(g => {
-        g.members.forEach(h => anyLinked.add(h));
-        liveSenders(g).forEach(h => anyLinked.add(h));
-    });
+    // フィルタで隠す端末:
+    // - プロトコル: 表示中のグループにつながらず、その端末で観測したプロトコルのチェックもすべて外れている
+    //   (mDNS だけの機器や、送信が止まった送信元も、チェックを外せば隠れる)
+    // - 文字列: 表示中のグループにつながらず、名前・IP・MAC も一致しない
     const filteredOut = new Set();
     if (filter.active) {
         nodes.get({ filter: (n) => FILTERABLE_TYPES.includes(n.customType) }).forEach(n => {
-            const byGroups = anyLinked.has(n.id) && !linkedHosts.has(n.id);
+            const protos = hostProtos.get(n.id);
+            const protoTicked = filter.protos === null || (Boolean(protos) && [...protos].some(k => filter.protos.has(k)));
+            const byProto = !linkedHosts.has(n.id) && !protoTicked;
             const byText = filter.text && !linkedHosts.has(n.id) && !nodeMatchesText(n, filter.text);
             const byIgmp = n.customType === "querier" && !drawReceivers; // クエリアは IGMP の機器
-            if (byGroups || byText || byIgmp) filteredOut.add(n.id);
+            if (byProto || byText || byIgmp) filteredOut.add(n.id);
         });
     }
     const collapsed = collapsedFamilyKeys(visible);
-    const hostMap = collapsedHostMap(filteredOut);
+    // 送信中の機器は、クエリアやクロックと同じく常に個別に表示する(受信機だけをまとめる)
+    const activeSenders = new Set();
+    visible.forEach(ip => liveSenders(groupModel.get(ip)).forEach(h => activeSenders.add(h)));
+    const hostMap = collapsedHostMap(filteredOut, activeSenders);
     const shown = (h) => hostMap.get(h) || h; // 端末がまとめられていれば、線はまとめノードへ繋ぐ
     const wantNodes = new Map(); // node id -> node data
     const wantEdges = new Map(); // edge id -> { from, to, label, kind }
@@ -762,6 +779,7 @@ function resetGroupModel() {
     renderedSignature.clear();
     lastSeenSnapshot = "";
     othersReportsSeen = false;
+    hostProtos.clear();
     focusId = null;
     dimmedEdges.clear();
     renderGroupSummary(new Map());
@@ -907,6 +925,7 @@ setInterval(() => {
 // ==============================================================================
 function handleNetworkEvent(data) {
     const srcIp = data.src_ip;
+    noteHostProto(srcIp, data.filter_key || data.proto);
     const groupIp = data.group_ip;
     const deviceName = data.resolved_name || srcIp;
     
@@ -1120,6 +1139,7 @@ function renderFlowStats(flows) {
         if (!existing || nameKnownLater) {
             updateNode(f.src_ip, f.resolved_name || f.src_ip, "host", `IP: ${f.src_ip}\nMAC: ${f.src_mac}`);
         }
+        noteHostProto(f.src_ip, f.proto);
         recordSender(f.src_ip, f.group_ip, STR.groupTitle(f.group_ip));
         markGroupDataSeen(f.group_ip, f.proto);
     });
