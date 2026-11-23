@@ -78,23 +78,34 @@
         </details>
         <input type="text" id="filter-text" class="filter-input" placeholder="Filter: IP / MAC / group / name / vlan N" title="Only matching traffic is sent to the UI (everything is still recorded to PCAP)">
         <label class="filter-raw" title="Show data-plane (audio) packets one by one. Use together with a filter."><input type="checkbox" id="filter-raw"> Show data plane per packet</label>
-        <span class="filter-sep"></span>
-        <input type="text" id="export-since" class="filter-input small" placeholder="From (date time)" title="Export from: YYYY-MM-DD HH:MM:SS">
-        <input type="text" id="export-until" class="filter-input small" placeholder="To (date time)" title="Export until: YYYY-MM-DD HH:MM:SS">
-        <select id="export-data-mode" class="filter-input small" title="How data-plane (audio) packets appear in the CSV">
-            <option value="aggregate">Audio: 1 s aggregate</option>
-            <option value="raw">Audio: every packet</option>
-            <option value="none">Audio: exclude</option>
-        </select>
-        <button class="log-btn" id="btn-export" title="Generate a CSV from the PCAP files (current filters apply)"><i class="fa-solid fa-file-csv"></i> Export CSV</button>
+    </section>
+
+    <!-- 2 行目: 操作と状態。CSV 出力の部品は「Export CSV」の中にまとめ、状態のチップを 1 行に並べる -->
+    <section class="status-bar" aria-label="Actions and status">
+        <details class="export-pop" id="export-pop">
+            <summary class="log-btn" title="Create a CSV from the recorded PCAP files"><i class="fa-solid fa-file-csv"></i> Export CSV <i class="fa-solid fa-chevron-down" aria-hidden="true"></i></summary>
+            <div class="export-panel">
+                <label>From <input type="text" id="export-since" class="filter-input small" placeholder="YYYY-MM-DD HH:MM:SS" title="Export from (leave empty for the beginning)"></label>
+                <label>To <input type="text" id="export-until" class="filter-input small" placeholder="YYYY-MM-DD HH:MM:SS" title="Export until (leave empty for now)"></label>
+                <label>Audio
+                    <select id="export-data-mode" class="filter-input small" title="How data-plane (audio) packets appear in the CSV">
+                        <option value="aggregate">1 s aggregate</option>
+                        <option value="raw">every packet</option>
+                        <option value="none">exclude</option>
+                    </select>
+                </label>
+                <p class="export-note">The current protocol and text filters apply.</p>
+                <button class="log-btn" id="btn-export" title="Generate the CSV now"><i class="fa-solid fa-file-csv"></i> Create CSV</button>
+            </div>
+        </details>
         <button class="log-btn" id="btn-capture" title="Stop/start the capture itself (nothing is written to PCAP while stopped; a new PCAP file starts on resume)">
             <i class="fa-solid fa-circle-stop"></i> <span id="capture-btn-label">Stop capture</span>
         </button>
-        <button class="log-btn danger" id="btn-shutdown" title="Exit IGMP-FLOW (monitoring and PCAP recording stop too)">
+        <button class="log-btn danger" id="btn-shutdown" title="Exit IGMP-FLOW (monitoring and PCAP recording stop too). Closing the browser does NOT stop monitoring; use this button or end IGMP-FLOW in Task Manager.">
             <i class="fa-solid fa-power-off"></i> Exit
         </button>
-        <span class="shutdown-note" title="The app keeps running after the browser is closed. To stop it, use the Exit button or end IGMP-FLOW in Task Manager.">ⓘ Monitoring continues even if you close the browser</span>
-        <span class="status-chip passive" id="passive-status" title="IGMP-FLOW only listens: this PC never sends an IGMP Join. With IGMP snooping, a switch forwards a group's stream only to ports that joined it, so stream data appears here only on a mirror (SPAN) port, on a switch that floods multicast, or when another app on this PC joined the group. A group shown without stream data is not proof that nothing is flowing. Likewise, other devices' Joins and Leaves (IGMP Reports) reach only the switch's router (querier) port, so they are visible here only on a mirror (SPAN) port."><i class="fa-solid fa-circle-info" aria-hidden="true"></i> Passive: this PC does not join groups</span>
+        <span class="bar-sep" aria-hidden="true"></span>
+        <span class="status-chip passive" id="passive-status" title="IGMP-FLOW only listens: this PC never sends an IGMP Join. With IGMP snooping, a switch forwards a group's stream only to ports that joined it, so stream data appears here only on a mirror (SPAN) port, on a switch that floods multicast, or when another app on this PC joined the group. A group shown without stream data is not proof that nothing is flowing. Likewise, other devices' Joins and Leaves (IGMP Reports) reach only the switch's router (querier) port, so they are visible here only on a mirror (SPAN) port."><i class="fa-solid fa-circle-info" aria-hidden="true"></i> Passive (this PC never joins)</span>
         <span class="status-chip" id="querier-status" title="IGMP querier status">Querier: checking</span>
         <span class="status-chip warn passive-hint" id="report-visibility" hidden title="IGMP Queries arrive, but no Join/Leave (IGMP Report) from any other device has been seen. With IGMP snooping, a switch forwards Reports only to its router (querier) port, so a normal port does not see them. Connect this PC to a mirror (SPAN) port of the uplink to the querier to see Joins and Leaves. If no device on the network has joined a group, this message also appears.">⚠ No Join/Leave seen: this port may not be a mirror (SPAN) port</span>
         <span class="status-chip" id="ptp-status" title="PTP anomaly detection (lost Announce, multiple grandmasters, interval mismatch)">PTP: ---</span>
@@ -255,11 +266,11 @@
                 <table class="log-table" id="log-table">
                     <thead>
                         <tr>
-                            <th style="width: 20%;">Time</th>
-                            <th style="width: 15%;">Protocol</th>
-                            <th style="width: 25%;">Event</th>
-                            <th style="width: 25%;">Host (IP / MAC)</th>
-                            <th style="width: 15%;">Multicast group</th>
+                            <th class="col-time">Time</th>
+                            <th class="col-proto">Protocol</th>
+                            <th>Event</th>
+                            <th class="col-host">Host (IP / MAC)</th>
+                            <th class="col-group">Multicast group</th>
                         </tr>
                     </thead>
                     <tbody id="log-list-body">

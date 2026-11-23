@@ -117,8 +117,8 @@ Try the UI without any hardware: `python scripts/demo_simulator.py` replays a sa
 - **⚠ chip in the status bar**: shows how many groups are marked ⚠; click it to move to the next one (a summary node is
   opened if needed).
 - **Legend**: click its title to hide or show it (remembered in this browser).
-- The map is fitted to the window automatically while the first data arrives and after a summary node is opened or closed.
-  It stops doing so once you zoom or move the map yourself.
+- The map is fitted to the window automatically while data arrives and the layout settles, and after a summary node is
+  opened or closed. It stops doing so once you zoom or move the map yourself.
 
 ## 4. Typical tasks
 

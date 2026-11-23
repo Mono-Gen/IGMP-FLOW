@@ -30,6 +30,7 @@ function initTopology() {
         nodes: {
             font: {
                 color: "#f8fafc",
+                background: "rgba(15, 21, 33, 0.78)", // 線や隣のラベルと重なっても読めるよう、暗い下地を付ける
                 size: 14,
                 face: "Inter, sans-serif"
             },
@@ -64,9 +65,10 @@ function initTopology() {
         physics: {
             solver: "forceAtlas2Based",
             forceAtlas2Based: {
-                gravitationalConstant: -100, // ノード同士が適度に押し合う
-                centralGravity: 0.015,
-                springLength: 130,          // 接続線の基本の長さ
+                gravitationalConstant: -150, // ノード同士を押し離す(-100 ではラベルが重なった)
+                centralGravity: 0.012,
+                avoidOverlap: 0.6,          // ノード(ラベルを含む大きさ)どうしが重ならないようにする
+                springLength: 170,          // 接続線の基本の長さ(ラベル 2〜3 行分の間隔を空ける)
                 springConstant: 0.08
             },
             stabilization: {
@@ -96,8 +98,14 @@ function initTopology() {
     });
 
     // 利用者が自分で拡大・移動したら、自動の全体表示はやめる(操作を上書きしないため)
+    // 配置は広がり続けることがある(データが届くたびに物理演算が動き、落ち着かない)。
+    // 利用者が自分で拡大・移動するまで(autoFitUntil が 0 になるまで)、表示中のノードが画面外に出たら全体を表示し直す
+    setInterval(() => {
+        if (autoFitUntil === 0 || autoFitUntil === -1 || !network) return;
+        if (anyVisibleNodeOutside()) network.fit({ animation: { duration: 300 } });
+    }, AUTO_FIT_CHECK_MS);
     network.on("zoom", cancelAutoFit);
-    network.on("dragStart", (params) => { if (!params.nodes || !params.nodes.length) cancelAutoFit(); });
+    network.on("dragStart", cancelAutoFit); // 背景の移動もノードの移動も、利用者が配置を決めている
 
     // Webフォントのロード完了時にトポロジを再描画する(アイコンが文字化けして見えるのを防ぐ)
     if (document.fonts) {
@@ -904,6 +912,22 @@ function noteLayoutChange(force = false) {
     }, AUTO_FIT_DELAY_MS);
 }
 
+const AUTO_FIT_CHECK_MS = 2000; // 画面外に出たノードが無いかを確かめる間隔
+
+/** 表示中のノードのどれかが、図の表示範囲の外にあるか。 */
+function anyVisibleNodeOutside() {
+    const box = document.getElementById("topology-canvas").getBoundingClientRect();
+    if (!box.width || !box.height) return false;
+    const tl = network.DOMtoCanvas({ x: 0, y: 0 });
+    const br = network.DOMtoCanvas({ x: box.width, y: box.height });
+    const ids = nodes.getIds({ filter: (n) => !n.hidden });
+    const pos = network.getPositions(ids);
+    return ids.some(id => {
+        const p = pos[id];
+        return p && (p.x < tl.x || p.x > br.x || p.y < tl.y || p.y > br.y);
+    });
+}
+
 /** 利用者が自分で拡大・移動・移動先を選んだら、自動の全体表示をやめる(予約済みのものも取り消す)。 */
 function cancelAutoFit() {
     autoFitUntil = 0;
@@ -1323,15 +1347,27 @@ setInterval(() => {
 // ==============================================================================
 // 4. バックエンドから届くイベントのリアルタイム処理 (メイン)
 // ==============================================================================
+/**
+ * 図に出す機器名を短くする。mDNS のサービス名(例: New-Room._openavc._tcp.local)は長く、図で重なりやすいので
+ * 「New-Room (openavc)」にする。末尾の .local も外す。元の名前はツールチップと詳細パネルに残す。
+ */
+function shortName(name) {
+    if (!name) return "";
+    const m = String(name).match(/^(.+?)\._([^.]+)\._(?:tcp|udp)\.local\.?$/i);
+    if (m) return `${m[1]} (${m[2]})`;
+    return String(name).replace(/\.local\.?$/i, "");
+}
+
 function handleNetworkEvent(data) {
     const srcIp = data.src_ip;
     noteHostProto(srcIp, data.filter_key || data.proto);
     const groupIp = data.group_ip;
     const groupKey = groupKeyOf(groupIp, data.vlan); // VLAN ごとに別のグループとして扱う
-    const deviceName = data.resolved_name || srcIp;
+    const fullName = data.resolved_name || "";
+    const deviceName = shortName(fullName) || srcIp;
     
     // MACアドレスの表示補填
-    const subtitle = `IP: ${srcIp}\nMAC: ${data.src_mac}`;
+    const subtitle = (fullName && fullName !== deviceName ? `Name: ${fullName}\n` : "") + `IP: ${srcIp}\nMAC: ${data.src_mac}`;
 
     // A. プロトコル別のトポロジ分岐処理
     if (data.proto === "IGMP") {
@@ -1545,9 +1581,11 @@ function renderFlowStats(flows) {
         // 送信元をトポロジ上にも端末として出す(毎秒の更新で揺らさないよう、未登録の時だけ追加する)
         const existing = nodes.get(f.src_ip);
         const nameKnownLater = existing && existing.customType === "host" && f.resolved_name
-            && !String(existing.label).startsWith(f.resolved_name);
+            && !String(existing.label).startsWith(shortName(f.resolved_name));
         if (!existing || nameKnownLater) {
-            updateNode(f.src_ip, f.resolved_name || f.src_ip, "host", `IP: ${f.src_ip}\nMAC: ${f.src_mac}`);
+            const name = shortName(f.resolved_name);
+            const fullLine = f.resolved_name && f.resolved_name !== name ? `Name: ${f.resolved_name}\n` : "";
+            updateNode(f.src_ip, name || f.src_ip, "host", `${fullLine}IP: ${f.src_ip}\nMAC: ${f.src_mac}`);
         }
         noteHostProto(f.src_ip, f.proto);
         const key = groupKeyOf(f.group_ip, f.vlan);
@@ -1968,7 +2006,14 @@ document.addEventListener("DOMContentLoaded", () => {
             scheduleGroupRender();
         }, 300);
     });
-    document.getElementById("btn-export").addEventListener("click", requestExport);
+    document.getElementById("btn-export").addEventListener("click", () => {
+        requestExport();
+        document.getElementById("export-pop").open = false;
+    });
+    document.addEventListener("pointerdown", (e) => {
+        const pop = document.getElementById("export-pop");
+        if (pop && pop.open && !pop.contains(e.target)) pop.open = false;
+    });
 
     // プロトコルのチェックの一括操作(全部外してから必要なものだけ入れる、という使い方のため)
     const setAllProtos = (checked) => {
