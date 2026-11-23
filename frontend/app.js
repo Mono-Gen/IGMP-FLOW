@@ -44,6 +44,9 @@ function initTopology() {
         },
         edges: {
             width: 2,
+            // 選択・マウスを乗せた線は 2 倍の太さにする(色は線ごとの EDGE_STYLES で、元の色のまま)
+            selectionWidth: (width) => width * 2,
+            hoverWidth: (width) => width * 1.5,
             color: {
                 color: "rgba(255, 255, 255, 0.15)",
                 highlight: "#3b82f6",
@@ -671,11 +674,16 @@ const FILTERABLE_TYPES = ["host", "querier", "sync"];
 // どの色も地図の背景(#0f1521)に対してコントラスト比 3:1 以上(非テキストの WCAG 基準)。
 // 線の種類ごとの見た目。送信(データ)は矢印付きのオレンジで、受信(Join)の青と見分けられるようにする。
 // クエリアとグループの線は補助情報なので、細い紫(クエリアの王冠と同じ色)の点線にする
+// 選択・マウスを乗せた線は、色を変えずに(色は送信/受信/クエリアの意味を持つため)不透明にし、太さで示す
+function lineColor(normal, emphasized) {
+    return { color: normal, highlight: emphasized, hover: emphasized };
+}
+
 const EDGE_STYLES = {
-    receiver: { color: { color: "rgba(96, 165, 250, 0.6)" } },
-    query: { color: { color: "rgba(192, 132, 252, 0.6)" }, dashes: [4, 6] },
+    receiver: { color: lineColor("rgba(96, 165, 250, 0.6)", "#60a5fa") },
+    query: { color: lineColor("rgba(192, 132, 252, 0.85)", "#c084fc"), dashes: [6, 4] },
     sender: {
-        color: { color: "rgba(249, 115, 22, 0.92)" },
+        color: lineColor("rgba(249, 115, 22, 0.92)", "#f97316"),
         arrows: { to: { enabled: true, scaleFactor: 0.7 } }
     }
 };
@@ -685,7 +693,7 @@ const EDGE_STYLES = {
 const EDGE_WIDTH_BASE = 2;
 const EDGE_WIDTH_MAX = 8;
 function edgeWidth(e) {
-    if (e.kind === "query") return 1;
+    if (e.kind === "query") return 1.5; // 細すぎると点線が背景に溶ける(1 では VLAN ごとの担当が追えなかった)
     if (e.kind === "sender") return 2.5;
     const n = e.count || 1;
     return Math.min(EDGE_WIDTH_MAX, EDGE_WIDTH_BASE + Math.log2(n) * 1.3);
