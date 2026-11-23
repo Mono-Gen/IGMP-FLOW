@@ -56,6 +56,7 @@ Try the UI without any hardware: `python scripts/demo_simulator.py` replays a sa
 
 ### 3.1 Top bar
 
+- **All / None** buttons tick or untick every protocol at once (untick all, then tick only what you want to see).
 - **Protocol check boxes** (IGMP, PTPv1, PTPv2, mDNS, SSDP, SAP, LLMNR, Dante ConMon, Dante audio, sACN, AES67 audio, Other multicast):
   choose what is shown in the log, Stream stats and the map. Filters are applied by the program itself; **everything is
   still recorded to PCAP**. On the map, unticking a kind hides its groups (a 239.255.x.x group not yet known to be sACN
@@ -110,7 +111,14 @@ Try the UI without any hardware: `python scripts/demo_simulator.py` replays a sa
 - **⚠ on a group**: more than one sender to the same group (check for a duplicate multicast address), or stream data with
   no receiver's Join. The second check is made only when other devices' Joins are visible on this port (not while the
   *No Join/Leave seen* chip is shown). Hover over the group for which one applies.
-- **Click a node** to highlight it and what it is connected to; everything else is dimmed. Click an empty area to clear.
+- **Click a node** to highlight it and what it is connected to; everything else is dimmed. A panel on the right lists the
+  details (senders, receivers, VLAN, warning reasons, groups a device sends to or receives) with buttons to copy IP
+  addresses; click a name in the panel to move to it. Click an empty area, the × button or press Esc to clear.
+- **⚠ chip in the status bar**: shows how many groups are marked ⚠; click it to move to the next one (a summary node is
+  opened if needed).
+- **Legend**: click its title to hide or show it (remembered in this browser).
+- The map is fitted to the window automatically while the first data arrives and after a summary node is opened or closed.
+  It stops doing so once you zoom or move the map yourself.
 
 ## 4. Typical tasks
 

@@ -88,10 +88,16 @@ function initTopology() {
         if (params.nodes && params.nodes.length) toggleFamily(params.nodes[0]);
     });
 
-    // ノードのクリックで、つながる線とノードだけを強調する。空白のクリックで元に戻す
+    // ノードのクリックで、つながる線とノードだけを強調し、詳細パネルを開く。空白のクリックで元に戻す
     network.on("click", (params) => {
-        setFocus(params.nodes && params.nodes.length ? params.nodes[0] : null);
+        const id = params.nodes && params.nodes.length ? params.nodes[0] : null;
+        setFocus(id);
+        showDetail(id);
     });
+
+    // 利用者が自分で拡大・移動したら、自動の全体表示はやめる(操作を上書きしないため)
+    network.on("zoom", () => { autoFitUntil = 0; });
+    network.on("dragStart", (params) => { if (!params.nodes || !params.nodes.length) autoFitUntil = 0; });
 
     // Webフォントのロード完了時にトポロジを再描画する(アイコンが文字化けして見えるのを防ぐ)
     if (document.fonts) {
@@ -548,11 +554,13 @@ function renderGroups() {
     const wantEdges = new Map(); // edge id -> { from, to, label, kind }
     const families = new Map();  // 系統キー -> まとめの集計
     const receiversVisible = joinsVisible();
+    const warnedKeys = [];
 
     visible.forEach(ip => {
         const g = groupModel.get(ip);
         const senders = liveSenders(g);
         const status = groupStatus(ip, g, senders, receiversVisible);
+        if (status.multi || status.noReceiver) warnedKeys.push(ip);
         const fam = groupFamily(ip);
         if (collapsed.has(fam.key)) {
             let f = families.get(fam.key);
@@ -638,7 +646,10 @@ function renderGroups() {
     if (widthUpdates.length) edges.update(widthUpdates);
 
     renderGroupSummary(families, subnets);
+    renderWarnSummary(warnedKeys);
     applyFocus();
+    noteLayoutChange();
+    refreshDetail();
 }
 
 /**
@@ -666,6 +677,208 @@ function queriersFor(id, node, queriers) {
 const querierVlans = new Map();
 // まとめノードのキー -> まとめたグループのキー(クエリアの線をサブネットで選ぶため)
 const familyGroups = new Map();
+
+// ------------------------------------------------------------------------------
+// クリックしたノードの詳細パネル
+// ツールチップはマウスを動かすと消えるため、送信元・受信機の一覧を読み比べられるよう固定のパネルに出す。
+// 内容は描き直しのたびに更新する(送信が止まった等の変化を追う)。
+// ------------------------------------------------------------------------------
+const DETAIL_LIST_MAX = 50; // 一覧に出す最大件数(多すぎるとパネルが長くなるため、残りは件数だけ示す)
+let detailId = null;
+
+function showDetail(id) {
+    detailId = id;
+    refreshDetail();
+}
+
+function refreshDetail() {
+    const panel = document.getElementById("detail-panel");
+    if (!panel) return;
+    const node = detailId !== null ? nodes.get(detailId) : null;
+    if (!node || node.hidden) {
+        panel.hidden = true;
+        detailId = null;
+        return;
+    }
+    panel.hidden = false;
+    const body = document.getElementById("detail-body");
+    body.textContent = "";
+    const title = document.getElementById("detail-title");
+    const firstLine = String(node.label || node.id).replace(/^⚠ /, "").split("\n")[0];
+    if (node.customType === "group") {
+        title.textContent = `${STR.detailGroup}: ${firstLine}`;
+        renderGroupDetail(body, node.id);
+    } else if (node.customType === "family") {
+        title.textContent = `${STR.detailSummary}: ${firstLine}`;
+        renderKeyList(body, STR.detailGroups, familyGroups.get(node.id) || []);
+    } else if (node.customType === "subnet") {
+        title.textContent = `${STR.detailSummary}: ${firstLine}`;
+        const ids = nodes.get({ filter: (n) => n.customType === "host" && hostSubnetKey(n.id) === node.id }).map(n => n.id);
+        renderHostList(body, STR.detailDevices, ids);
+    } else {
+        const kind = node.customType === "querier" ? STR.detailQuerier : node.customType === "sync" ? STR.detailClock : STR.detailDevice;
+        title.textContent = `${kind}: ${firstLine}`;
+        renderHostDetail(body, node);
+    }
+}
+
+function addSection(body, heading) {
+    const h = document.createElement("h4");
+    h.textContent = heading;
+    body.appendChild(h);
+}
+
+function addLine(body, text, cls = "") {
+    const div = document.createElement("div");
+    if (cls) div.className = cls;
+    div.textContent = text;
+    body.appendChild(div);
+}
+
+/** コピー用のボタン。クリップボードが使えない環境(権限・古いブラウザ)では何もしない。 */
+function copyButton(text) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "copy-btn";
+    btn.textContent = STR.copy;
+    btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        try {
+            await navigator.clipboard.writeText(text);
+            btn.textContent = STR.copied;
+            setTimeout(() => { btn.textContent = STR.copy; }, 1200);
+        } catch (err) {
+            console.warn("クリップボードへコピーできませんでした:", err);
+        }
+    });
+    return btn;
+}
+
+/** 機器の一覧(名前と IP、IP のコピー)。名前を押すとその機器へ移動する。 */
+function renderHostList(body, heading, ids) {
+    addSection(body, `${heading} (${ids.length})`);
+    if (!ids.length) { addLine(body, STR.detailNone, "muted"); return; }
+    const ul = document.createElement("ul");
+    ids.slice().sort(compareHostIds).slice(0, DETAIL_LIST_MAX).forEach(id => {
+        const li = document.createElement("li");
+        li.appendChild(detailLink(hostDisplay(id), id));
+        li.appendChild(copyButton(String(id)));
+        ul.appendChild(li);
+    });
+    body.appendChild(ul);
+    if (ids.length > DETAIL_LIST_MAX) addLine(body, STR.detailMore(ids.length - DETAIL_LIST_MAX), "muted");
+}
+
+/** グループの一覧。名前を押すとそのグループへ移動する(まとめの中なら開く)。 */
+function renderKeyList(body, heading, keys) {
+    addSection(body, `${heading} (${keys.length})`);
+    if (!keys.length) { addLine(body, STR.detailNone, "muted"); return; }
+    const ul = document.createElement("ul");
+    keys.slice().sort((a, b) => compareIp(ipOf(a), ipOf(b))).slice(0, DETAIL_LIST_MAX).forEach(key => {
+        const li = document.createElement("li");
+        li.appendChild(detailLink(getMulticastGroupLabel(key).replace(/\n/g, " · "), key));
+        li.appendChild(copyButton(ipOf(key)));
+        ul.appendChild(li);
+    });
+    body.appendChild(ul);
+    if (keys.length > DETAIL_LIST_MAX) addLine(body, STR.detailMore(keys.length - DETAIL_LIST_MAX), "muted");
+}
+
+function detailLink(text, id) {
+    const a = document.createElement("button");
+    a.type = "button";
+    a.className = "detail-link name";
+    a.textContent = text;
+    a.addEventListener("click", () => goToNode(id));
+    return a;
+}
+
+/** 一覧から選んだノードへ移動する。まとめの中にあれば開く。 */
+function goToNode(id) {
+    if (!network) return;
+    if (!nodes.get(id) || nodes.get(id).hidden) {
+        const fam = groupModel.has(id) ? groupFamily(id).key : hostSubnetKey(id);
+        if (fam) {
+            expandedFamilies.add(fam);
+            renderGroups();
+        }
+    }
+    const n = nodes.get(id);
+    if (!n || n.hidden) return;
+    autoFitUntil = 0;
+    network.focus(id, { scale: 1.2, animation: { duration: 400 } });
+    network.selectNodes([id]);
+    setFocus(id);
+    showDetail(id);
+}
+
+function compareHostIds(a, b) {
+    const ipLike = (x) => /^\d+\.\d+\.\d+\.\d+$/.test(String(x));
+    if (ipLike(a) && ipLike(b)) return compareIp(String(a), String(b));
+    return String(a).localeCompare(String(b));
+}
+
+function renderGroupDetail(body, key) {
+    const g = groupModel.get(key);
+    if (!g) return;
+    const vlan = vlanOf(key);
+    addLine(body, `${STR.detailKind}: ${groupKindLabel(key)}`);
+    if (vlan !== null) addLine(body, `${STR.detailVlan}: ${vlan}`);
+    addLine(body, `${STR.detailData}: ${isGroupDataSeen(key) ? STR.detailDataSeen : STR.detailDataNotSeen}`);
+    const senders = liveSenders(g);
+    const status = groupStatus(key, g, senders, joinsVisible());
+    if (status.multi) addLine(body, STR.groupMultiSender, "warn-line");
+    if (status.noReceiver) addLine(body, STR.groupNoReceiver, "warn-line");
+    if (senders.length) renderHostList(body, STR.detailSenders, senders);
+    else { addSection(body, STR.detailSenders); addLine(body, STR.detailSendersUnknown, "muted"); }
+    renderHostList(body, STR.detailReceivers, [...g.members]);
+    const requested = new Set();
+    g.requested.forEach(list => list.forEach(x => requested.add(x)));
+    if (requested.size) {
+        addSection(body, STR.detailRequested);
+        addLine(body, Array.from(requested).sort(compareIp).join(", "));
+    }
+}
+
+function renderHostDetail(body, node) {
+    const receives = [];
+    const sends = [];
+    groupModel.forEach((g, key) => {
+        if (g.members.has(node.id)) receives.push(key);
+        if (liveSenders(g).includes(node.id)) sends.push(key);
+    });
+    const title = node.title && node.title.textContent !== undefined ? node.title.textContent : "";
+    title.split("\n").filter(Boolean).forEach(line => addLine(body, line, "muted"));
+    if (node.customType === "querier") {
+        const vlans = [...(querierVlans.get(node.id) || [])].map(v => v === null ? "untagged" : String(v));
+        addLine(body, `${STR.detailVlans}: ${vlans.join(", ") || STR.detailNone}`);
+    }
+    const protos = hostProtos.get(node.id);
+    if (protos && protos.size) addLine(body, `${STR.detailProtocols}: ${[...protos].sort().join(", ")}`);
+    renderKeyList(body, STR.detailSends, sends);
+    renderKeyList(body, STR.detailReceives, receives);
+}
+
+// ------------------------------------------------------------------------------
+// 自動で全体を表示する
+// 最初のデータは一気に届き、ノードが画面外に散らばる。届き始めてからしばらくは、図の構成が変わるたびに
+// (少し待って配置が落ち着いてから)全体を表示する。利用者が拡大・移動したら、それ以降は自動ではしない。
+// ------------------------------------------------------------------------------
+const AUTO_FIT_WINDOW_MS = 10000; // 最初のデータから全体表示を続ける時間
+const AUTO_FIT_DELAY_MS = 800;    // 構成が変わってから全体表示するまでの待ち(配置の物理演算が落ち着くのを待つ)
+let autoFitUntil = -1;            // -1: まだデータが来ていない / 0: 自動の全体表示はしない / それ以外: この時刻まで
+let autoFitTimer = null;
+let lastNodeCount = 0;
+
+function noteLayoutChange(force = false) {
+    const count = nodes.get({ filter: (n) => !n.hidden }).length;
+    const changed = count !== lastNodeCount;
+    lastNodeCount = count;
+    if (autoFitUntil === -1 && count > 0) autoFitUntil = Date.now() + AUTO_FIT_WINDOW_MS;
+    if (!force && !(changed && autoFitUntil > Date.now())) return;
+    clearTimeout(autoFitTimer);
+    autoFitTimer = setTimeout(() => { if (network) network.fit({ animation: { duration: 400 } }); }, AUTO_FIT_DELAY_MS);
+}
 
 // フィルタで隠す対象になるノードの種類(グループとまとめノードは renderGroups が作り直す)
 const FILTERABLE_TYPES = ["host", "querier", "sync"];
@@ -837,6 +1050,38 @@ function compareIp(a, b) {
     return 0;
 }
 
+// ------------------------------------------------------------------------------
+// ⚠ の付いたグループの件数。押すと次のグループへ移動して強調し、詳細を開く(まとめの中なら開く)
+// ------------------------------------------------------------------------------
+let warnedGroups = [];
+let warnCursor = 0;
+
+function renderWarnSummary(keys) {
+    warnedGroups = keys.slice().sort();
+    const chip = document.getElementById("warn-summary");
+    if (!chip) return;
+    chip.hidden = warnedGroups.length === 0;
+    chip.textContent = warnedGroups.length ? STR.warnSummary(warnedGroups.length) : "";
+}
+
+function goToNextWarning() {
+    if (!warnedGroups.length || !network) return;
+    const key = warnedGroups[warnCursor % warnedGroups.length];
+    warnCursor += 1;
+    // まとめノードの中にあれば、その系統を開いてから移動する
+    const fam = groupFamily(key);
+    if (!nodes.get(key) && nodes.get(fam.key)) {
+        expandedFamilies.add(fam.key);
+        renderGroups();
+    }
+    if (!nodes.get(key)) return;
+    autoFitUntil = 0; // 移動した位置を自動の全体表示で上書きしない
+    network.focus(key, { scale: 1.2, animation: { duration: 400 } });
+    network.selectNodes([key]);
+    setFocus(key);
+    showDetail(key);
+}
+
 /** 状態バーに「N グループをまとめて表示中」を出す。 */
 function renderGroupSummary(families, subnets = new Map()) {
     const chip = document.getElementById("group-summary");
@@ -867,6 +1112,7 @@ function toggleFamily(nodeId) {
         return;
     }
     renderGroups();
+    noteLayoutChange(true);
 }
 
 /** 画面の初期化(リセット/NIC切替)でグループの状態も捨てる。 */
@@ -880,6 +1126,10 @@ function resetGroupModel() {
     othersReportsSeen = false;
     hostProtos.clear();
     querierVlans.clear();
+    autoFitUntil = -1;
+    lastNodeCount = 0;
+    warnCursor = 0;
+    showDetail(null);
     familyGroups.clear();
     focusId = null;
     dimmedEdges.clear();
@@ -1290,7 +1540,10 @@ function setBadge(id, value) {
 
 function showTab(name) {
     activeTab = name;
-    document.querySelectorAll(".panel-tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
+    document.querySelectorAll(".panel-tab").forEach(t => {
+        t.classList.toggle("active", t.dataset.tab === name);
+        t.setAttribute("aria-selected", String(t.dataset.tab === name));
+    });
     ["log", "ptp", "flow"].forEach(n => {
         const pane = document.getElementById(`pane-${n}`);
         if (pane) pane.hidden = n !== name;
@@ -1483,6 +1736,7 @@ function renderQuerierStatus(s) {
         el.textContent = STR.querierChecking;
         el.className = "status-chip";
     }
+    el.title = el.textContent; // 長いとき(VLAN が多い等)は省略されるので、全文をツールチップに出す
     // Queryは届くのに他の端末のReportが届かない: ミラーではない通常ポートの可能性を知らせる
     const hint = document.getElementById("report-visibility");
     const seenOthers = (s.reports_seen || 0) > 0;
@@ -1678,6 +1932,45 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     document.getElementById("btn-export").addEventListener("click", requestExport);
 
+    // プロトコルのチェックの一括操作(全部外してから必要なものだけ入れる、という使い方のため)
+    const setAllProtos = (checked) => {
+        document.querySelectorAll("#filter-protos input[type=checkbox]").forEach(b => { b.checked = checked; });
+        sendFilter();
+        scheduleGroupRender();
+    };
+    document.getElementById("btn-protos-all").addEventListener("click", () => setAllProtos(true));
+    document.getElementById("btn-protos-none").addEventListener("click", () => setAllProtos(false));
+
+    // ⚠ の付いたグループへ順に移動する
+    document.getElementById("warn-summary").addEventListener("click", goToNextWarning);
+
+    // 詳細パネルを閉じる(ボタン / Esc)
+    const closeDetail = () => {
+        showDetail(null);
+        setFocus(null);
+        if (network) network.unselectAll();
+    };
+    document.getElementById("detail-close").addEventListener("click", closeDetail);
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && detailId !== null) closeDetail(); });
+
+    // 凡例の折りたたみ(状態はこのブラウザに覚える。保存できない環境でも動作は変わらない)
+    const LEGEND_KEY = "igmpflow.legendCollapsed";
+    const legendCard = document.getElementById("map-legend-card");
+    const legendBtn = document.getElementById("legend-toggle");
+    const applyLegend = (collapsed) => {
+        legendCard.classList.toggle("collapsed", collapsed);
+        legendBtn.setAttribute("aria-expanded", String(!collapsed));
+    };
+    const LEGEND_AUTO_COLLAPSE_PX = 1100; // これより狭いと凡例が図の左側を大きく隠す(900px で左端のノードが欠けた)
+    let savedLegend = null;
+    try { savedLegend = localStorage.getItem(LEGEND_KEY); } catch (e) { savedLegend = null; }
+    applyLegend(savedLegend === null ? window.innerWidth < LEGEND_AUTO_COLLAPSE_PX : savedLegend === "1");
+    legendBtn.addEventListener("click", () => {
+        const collapsed = !legendCard.classList.contains("collapsed");
+        applyLegend(collapsed);
+        try { localStorage.setItem(LEGEND_KEY, collapsed ? "1" : "0"); } catch (e) { /* 保存できなくても表示は切り替わる */ }
+    });
+
     // 全体表示フィットボタン
     document.getElementById("btn-fit").addEventListener("click", () => {
         if (network) network.fit({ animation: true });
@@ -1693,10 +1986,12 @@ document.addEventListener("DOMContentLoaded", () => {
             network.setOptions({ physics: { enabled: false } });
             freezeBtn.innerHTML = '<i class="fa-solid fa-play"></i>';
             freezeBtn.title = STR.freezeResume;
+            freezeBtn.classList.add("active");
         } else {
             network.setOptions({ physics: { enabled: true } });
             freezeBtn.innerHTML = '<i class="fa-solid fa-pause"></i>';
             freezeBtn.title = STR.freezeHold;
+            freezeBtn.classList.remove("active");
         }
     });
 
