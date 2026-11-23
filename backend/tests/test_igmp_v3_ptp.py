@@ -179,6 +179,30 @@ class TestPtpAndMulticast(unittest.TestCase):
         self.assertAlmostEqual(ev["ts"], 1_700_000_000.25, places=2)
         self.assertGreaterEqual(ev["frame_len"], 100)
 
+    def test_sacn_is_not_reported_as_dante(self) -> None:
+        """照明の sACN(UDP 5568)は Dante と同じ 239.255.x.x 宛でも sACN として検出する(Issue #1)。"""
+        ev = self.analyzer.decode_packet_events(self._udp("239.255.0.37", 5568, b"x" * 126))[0]
+        self.assertEqual((ev["proto"], ev["event_code"], ev["plane"]), ("sACN", "sacn", "data"))
+        self.assertEqual((ev["universe"], ev["tag"]), (37, "sACN universe 37"))
+
+    def test_other_ports_in_239_255_are_not_assumed_to_be_dante(self) -> None:
+        """239.255.x.x でも Dante 音声のポート(4321)以外は Dante と決めつけず未分類にする。"""
+        ev = self.analyzer.decode_packet_events(self._udp("239.255.1.1", 7000, b"x" * 10))[0]
+        self.assertEqual(ev["proto"], "Multicast-Other")
+
+    def test_sacn_universe_from_address(self) -> None:
+        """宛先IPからのユニバース番号算出。期待値は E1.31 の式 239.255.(N>>8).(N&0xFF) から求めた値。"""
+        from backend.packet_analyzer import sacn_universe
+        cases = {
+            "239.255.0.1": 1, "239.255.0.255": 255, "239.255.1.0": 256, "239.255.2.138": 650,
+            "239.255.249.255": 63999,  # 上限
+            "239.255.0.0": None,  # ユニバース0は無効
+            "239.255.250.0": None,  # 64000 は範囲外
+            "239.254.0.1": None, "224.0.0.251": None, "bad": None,
+        }
+        for ip, expected in cases.items():
+            self.assertEqual(sacn_universe(ip), expected, ip)
+
     def test_discovery_protocols_use_their_common_names(self) -> None:
         """探索系は総称ではなく、一般的なプロトコル名(mDNS/SSDP/SAP/LLMNR)をprotoに持つ。"""
         cases = [

@@ -56,10 +56,15 @@ Try the UI without any hardware: `python scripts/demo_simulator.py` replays a sa
 
 ### 3.1 Top bar
 
-- **Protocol check boxes** (IGMP, PTPv1, PTPv2, mDNS, SSDP, SAP, LLMNR, Dante ConMon, Dante audio, AES67 audio, Other multicast):
-  choose what is sent to the screen. Filters are applied by the program itself; **everything is still recorded to PCAP**.
+- **All / None** buttons tick or untick every protocol at once (untick all, then tick only what you want to see).
+- **Protocol check boxes** (IGMP, PTPv1, PTPv2, mDNS, SSDP, SAP, LLMNR, Dante ConMon, Dante audio, sACN, AES67 audio, Other multicast):
+  choose what is shown in the log, Stream stats and the map. Filters are applied by the program itself; **everything is
+  still recorded to PCAP**. On the map, unticking a kind hides its groups (a 239.255.x.x group not yet known to be sACN
+  or Dante is hidden only when both are unticked), and unticking *IGMP* hides the receiver (Join) lines. A device is hidden
+  when none of the protocols it was seen using is ticked and none of the groups it is connected to is shown.
 - **PTP types**: show only some PTP message types (for example only Announce).
-- **Filter box**: shows only traffic whose IP, MAC, group or device name contains the text.
+- **Filter box**: shows only traffic whose IP, MAC, group or device name contains the text. The map shows only the
+  matching groups and devices and what they are connected to.
 - **Show data plane per packet**: audio streams are normally summarized once per second; tick this to see each packet
   (use it together with a narrow filter).
 - **Export CSV** with optional time range (`YYYY-MM-DD HH:MM:SS`, local time) and the audio handling option.
@@ -85,20 +90,45 @@ Try the UI without any hardware: `python scripts/demo_simulator.py` replays a sa
 - **Log**: one row per event (time, protocol, event, host, group). **Pause log** only stops adding rows to this view.
 - **PTP status**: for each clock and message type, the *measured* interval and the interval the clock *declares*, plus grandmaster
   ID and priorities. Warnings appear for a lost Announce, several grandmasters in one domain, and interval mismatches.
-- **Stream stats**: audio streams (Dante audio, AES67 audio, other multicast) as packets/s and bit/s, refreshed every second.
+- **Stream stats**: stream data (Dante audio, sACN, AES67 audio, other multicast) as packets/s and bit/s, refreshed every second.
   Only streams that reach this port are listed. IGMP-FLOW never joins a group (see the *Passive* chip at the top), so with IGMP
   snooping a stream is visible only on a mirror (SPAN) port or a switch that floods multicast.
-- **Group colour on the map**: green = stream data seen on this port in the last few seconds; grey = not seen on this port.
+- **Group colour on the map**: coloured = stream data seen on this port in the last few seconds; grey = not seen on this port.
   Grey is not an error and does not mean the stream has stopped.
+- **Group icons**: a light bulb is sACN (lighting), a speaker is Dante audio, a wave is AES67 audio. sACN and Dante both use
+  239.255.x.x, and an IGMP Join carries no port number, so a 239.255.x.x group shows a question mark
+  ("sACN universe N or Dante") until its stream data is seen on this port.
+- **Summary nodes**: when there are more than 40 groups, groups in the same address range (for example the sACN/Dante range of 239.255.x.x)
+  are drawn as one node that shows how many groups it holds and how many have stream data. When there are more than
+  30 devices, devices in the same /24 subnet are drawn as one node. Queriers, PTP clocks and devices that are sending stream
+  data are always shown on their own, so you can see who sends.
+  Double-click a summary node to show what it contains; double-click one of those nodes to put them back together.
+  The status bar says how many groups and devices are summarised.
+- **Senders**: an orange arrow from a device to a group means stream data from that device to the group was seen on this
+  port in the last few seconds. Blue lines without arrows are receivers (IGMP Join). Senders are known only when the stream
+  reaches this port (a mirror port); otherwise the group's tooltip says "Senders: unknown on this port", which does not mean
+  there is no sender. When a receiver asks for specific sources (IGMPv3), the tooltip lists them too.
+- **⚠ on a group**: more than one sender to the same group (check for a duplicate multicast address), or stream data with
+  no receiver's Join. The second check is made only when other devices' Joins are visible on this port (not while the
+  *No Join/Leave seen* chip is shown). Hover over the group for which one applies.
+- **Click a node** to highlight it and what it is connected to; everything else is dimmed. A panel on the right lists the
+  details (senders, receivers, VLAN, warning reasons, groups a device sends to or receives) with buttons to copy IP
+  addresses; click a name in the panel to move to it. Click an empty area, the × button or press Esc to clear.
+- **⚠ chip in the status bar**: shows how many groups are marked ⚠; click it to move to the next one (a summary node is
+  opened if needed).
+- **Legend**: click its title to hide or show it (remembered in this browser).
+- The map is fitted to the window automatically while data arrives and the layout settles, and after a summary node is
+  opened or closed. It stops doing so once you zoom or move the map yourself.
 
 ## 4. Typical tasks
 
 - **Who joined which group?** Look at the map, or filter the log to *IGMP* and type the group address in the filter box.
 - **Is there an IGMP querier?** Check the *Querier* chip. "No querier!" means IGMP snooping on the switches may fail; "Multiple
-  queriers" shows all of them and which one should win (the lowest IP). Query version (v1/v2/v3), robustness and interval are
+  queriers" means more than one querier in the same VLAN and shows which one should win (the lowest IP); one querier
+  per VLAN is normal (section 10). Query version (v1/v2/v3), robustness and interval are
   shown in the log detail and CSV.
 - **Am I seeing everything?** Check that the yellow *No Join/Leave seen* chip is not shown and that the groups you care about are
-  green. If not, the PC is probably on a normal port of a snooping switch: move it to a mirror (SPAN) port (see section 1).
+  coloured, not grey. If not, the PC is probably on a normal port of a snooping switch: move it to a mirror (SPAN) port (see section 1).
 - **Is the clock healthy?** Open *PTP status*. Dante uses PTPv1; AES67/ST 2110 use PTPv2. Both can coexist. Check that one grandmaster
   announces per domain and that measured intervals match the declared ones.
 - **Find unwanted traffic:** tick only *SSDP*, *LLMNR* and *Other multicast* to see office-network or unknown multicast on the audio network.
@@ -111,7 +141,7 @@ Try the UI without any hardware: `python scripts/demo_simulator.py` replays a sa
 | What | Where |
 |---|---|
 | PCAP recordings, CSV exports, logs | `%LOCALAPPDATA%\IGMP-FLOW\data\` (`captures`, `exports`, `logs`). Change with the environment variable `IGMP_FLOW_DATA_DIR` |
-| CSV columns | Timestamp, Event, Device Name, IP Address, MAC Address, Multicast Group, Protocol, Packets, Detail, Event Code |
+| CSV columns | Timestamp, Event, Device Name, IP Address, MAC Address, Multicast Group, Protocol, Packets, Detail, Event Code, VLAN (empty when untagged) |
 
 PCAP files keep audio packets as headers only (first 128 bytes) to save space; control traffic (IGMP, PTP, mDNS and so on) is stored in full.
 These files contain real IP/MAC addresses and device names, so treat them as confidential and do not upload them to public places.
@@ -131,6 +161,9 @@ Command line options of the app: `-i/--interface`, `--interactive`, `-p/--port`,
 |---|---|
 | "Npcap is not installed" at start | Install Npcap (section 1.2) and restart |
 | NIC list empty, or nothing is captured | Run as administrator; check Npcap is installed; select the NIC connected to the mirror port; confirm the mirror is configured on the switch |
+| The map is a dense ball of labels | Update to 0.3.0 or later: many groups and devices are then drawn as summary nodes |
+| "Multiple queriers" on a network with several VLANs | Since 0.3.0 this appears only for more than one querier in the same VLAN (or, without VLAN tags, the same /24). See section 10 |
+| A lighting (sACN) network shows "Dante" | Fixed in 0.3.0: sACN and Dante are told apart by UDP port. A group seen only by its Join shows "sACN universe N or Dante" |
 | A group is on the map but grey / missing from Stream stats | Normal on a non-mirror port with IGMP snooping: IGMP-FLOW does not join, so the switch does not forward the stream here. Use a mirror (SPAN) port to see the stream itself |
 | "No Join/Leave seen" chip | The PC is on a normal port of a snooping switch. Mirror the uplink to the querier (or the devices' ports) to this PC's port |
 | Only this PC's traffic is visible | The port is not a mirror (SPAN) port, or the NIC is a virtual adapter |
@@ -151,3 +184,57 @@ Delete the program folder (or `IGMP-FLOW.exe`) and the data folder `%LOCALAPPDAT
 
 IGMP-FLOW is passive (it never transmits), listens only on `127.0.0.1`, rejects connections from other web pages, and treats network
 data as untrusted. It has no login: do not expose ports 8000/8765 outside the PC. Details are in the README.
+
+## 9. Known multicast groups
+
+IGMP-FLOW gives these addresses a name on the map and in the log. Use the table to look up an address you see.
+An address that is not listed can still be normal: other software on the same PC or device (lighting, control or AV
+software) may join its own groups. The *Source* column names where each entry was checked.
+
+| Address | Port (UDP) | Protocol / use | Shown in IGMP-FLOW as | Source |
+|---|---|---|---|---|
+| 224.0.0.1 | – | IGMP: all hosts (General Query destination) | All Hosts | IANA multicast registry |
+| 224.0.0.2 | – | IGMP: all routers (IGMPv2 Leave destination) | All Routers | IANA multicast registry |
+| 224.0.0.22 | – | IGMPv3 membership reports | IGMPv3 Reports | IANA multicast registry |
+| 224.0.0.107 | 319, 320 | PTP peer delay | PTP peer delay | IANA multicast registry |
+| 224.0.1.129 | 319, 320 | PTP clock sync (default domain; Dante PTPv1, AES67 PTPv2) | PTP clock sync | IANA, Audinate |
+| 224.0.1.130 – 224.0.1.132 | 319, 320 | PTP clock sync (other domains) | PTP clock sync (alternate domain) | IANA, Audinate |
+| 224.0.0.230 – 224.0.0.233 | 8700 – 8708 | Dante control and monitoring (ConMon) | Dante control & monitoring | Audinate |
+| 224.0.0.251 | 5353 | mDNS (Bonjour): device discovery, used by Dante Controller | mDNS | IANA, Audinate |
+| 224.0.0.252 | 5355 | LLMNR (Windows name resolution); not needed on an AV network | LLMNR | RFC 4795 |
+| 239.254.3.3 | 9998 | Dante PTP logging (only when enabled) | Dante PTP logging | Audinate |
+| 239.255.255.250 | 1900 | SSDP / UPnP discovery (office devices, Windows) | SSDP | UPnP Device Architecture |
+| 239.255.255.255 | 9875 | SAP: AES67 stream announcements | SAP | RFC 2974 |
+
+Ranges that IGMP-FLOW recognises by address **and port**:
+
+| Address range | Port (UDP) | Protocol / use | Shown in IGMP-FLOW as | Source |
+|---|---|---|---|---|
+| 239.255.0.0 – 239.255.249.255 | 5568 | sACN (ANSI E1.31) lighting data; universe N uses 239.255.(N÷256).(N mod 256) | sACN universe N | ANSI E1.31 (via lighting vendors' manuals) |
+| 239.255.0.0/16 | 4321 | Dante multicast audio/video | Dante audio | Audinate |
+| any 239.x.x.x | 5004 | AES67 (RTP) audio; 239.69.x.x is a common default but each device can be set differently | AES67 audio | AES67 vendors' guides |
+
+sACN and Dante share 239.255.x.x. An IGMP Join carries no port number, so a 239.255.x.x group seen only by its Join is shown
+as "sACN universe N or Dante" until its stream data is seen on this port.
+
+Sources: IANA *IPv4 Multicast Address Space Registry*; Audinate *Dante Information for Network Administrators*;
+RFC 2974 (SAP); RFC 4795 (LLMNR); UPnP Device Architecture (SSDP); ANSI E1.31 (sACN).
+
+## 10. Networks split into VLANs
+
+Audio, lighting, video and control are often kept in separate VLANs, each with its own IGMP querier. IGMP works per VLAN,
+so one querier per VLAN is normal.
+
+- **To see several VLANs at once**, mirror a trunk port (or several VLANs) to the PC's port. A normal access port shows only
+  its own VLAN.
+- **When VLAN tags are visible**, IGMP-FLOW records the VLAN ID of each event (CSV: last column *VLAN*). The map shows the
+  same group address in two VLANs as two nodes labelled *VLAN n*, links each querier only to the groups of its own VLAN, and
+  the *Querier* chip lists the elected querier per VLAN. "Multiple queriers" is reported only when one VLAN has more than one.
+  Type `vlan 10` in the filter box to show one VLAN.
+- **On Windows, the tags are often not visible**: many network adapter drivers remove the 802.1Q tag before capture software
+  sees the frame. Some adapters have a driver or registry setting that keeps the tags (Intel documents one for its adapters);
+  check your adapter's documentation. Without tags, IGMP-FLOW cannot tell VLANs apart: the same group address in two VLANs is
+  shown as one node. It then links each group to the querier in the same /24 subnet as its devices, and if it sees queriers
+  in different subnets, the chip says so ("probably separate VLANs") instead of warning about multiple queriers.
+
+Sources: Wireshark wiki *CaptureSetup/VLAN*; Intel support article 000005498 (keeping VLAN tags on Intel adapters).

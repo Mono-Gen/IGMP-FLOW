@@ -8,7 +8,7 @@ from backend.paths import app_base_dir
 
 KNOWN_EVENT_CODES = {
     "igmp_join", "igmp_leave", "igmp_query", "igmp_query_group", "igmp_source_update", "igmp_report_unparsed",
-    "igmp_unsupported", "ptp_message", "discovery", "dante_conmon", "dante_audio", "aes67_audio", "multicast_other",
+    "igmp_unsupported", "ptp_message", "discovery", "dante_conmon", "dante_audio", "sacn", "aes67_audio", "multicast_other",
 }
 STATUS_TYPES = {"querier_status", "ptp_status", "flow_stats", "capture_status", "capture_state"}
 

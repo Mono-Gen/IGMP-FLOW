@@ -2,8 +2,9 @@
 
 Try the UI without any network hardware, Npcap or administrator rights. The simulator starts the same local UI server and
 WebSocket server as the real app, opens the page in your browser, and replays a scenario in a loop: a querier appears,
-Dante/AES67 devices join and leave groups, PTPv1/PTPv2 clocks show up, audio streams are reported as 1-second statistics,
-and a PTP warning appears. Nothing is captured and nothing is written to disk.
+Dante/AES67 devices join and leave groups, a lighting desk sends sACN (and a backup desk sends to one of the same universes,
+which the map marks with a warning), PTPv1/PTPv2 clocks show up, streams are reported as 1-second statistics, and a PTP
+warning appears. Nothing is captured and nothing is written to disk.
 
 Usage (from the project root):
     python scripts/demo_simulator.py
@@ -56,12 +57,25 @@ def scenario() -> List[Dict[str, Any]]:
                                    version=3, resolved_name="Receiver-B.local", sources=[], record_type="CHANGE_TO_EXCLUDE_MODE")},
         {"delay": 1.5, "event": ev("IGMP", "igmp_join", "Join", "192.168.1.30", "00:20:18:ee:ff:03", "239.255.20.20",
                                    version=2, resolved_name="Speaker-C.local")},
+        {"delay": 1.0, "event": ev("IGMP", "igmp_join", "Join", "192.168.1.41", "00:1d:c1:41:00:01", "239.255.0.1",
+                                   version=2, resolved_name="Dimmer-Rack.local")},
+        {"delay": 0.5, "event": ev("IGMP", "igmp_join", "Join", "192.168.1.41", "00:1d:c1:41:00:01", "239.255.0.2",
+                                   version=2, resolved_name="Dimmer-Rack.local")},
         {"delay": 1.0, "message": {"type": "flow_stats", "interval_s": 1.0, "flows": [
             {"proto": "Dante-Audio", "src_ip": "192.168.1.10", "src_mac": "00:a0:de:aa:bb:01", "group_ip": "239.255.10.10",
              "tag": "Dante audio stream", "packets": 4000, "bytes": 4_000_000, "pps": 4000.0, "bps": 32_000_000,
              "resolved_name": "Console-A.local"},
             {"proto": "AES67-Audio", "src_ip": "192.168.1.100", "src_mac": "00:40:94:12:34:56", "group_ip": "239.69.1.1",
-             "tag": "AES67 audio stream", "packets": 1000, "bytes": 500_000, "pps": 1000.0, "bps": 4_000_000}]}},
+             "tag": "AES67 audio stream", "packets": 1000, "bytes": 500_000, "pps": 1000.0, "bps": 4_000_000},
+            {"proto": "sACN", "src_ip": "192.168.1.40", "src_mac": "00:1d:c1:40:00:01", "group_ip": "239.255.0.1",
+             "tag": "sACN universe 1", "packets": 44, "bytes": 28_000, "pps": 44.0, "bps": 224_000,
+             "resolved_name": "Lighting-Desk.local"},
+            {"proto": "sACN", "src_ip": "192.168.1.40", "src_mac": "00:1d:c1:40:00:01", "group_ip": "239.255.0.2",
+             "tag": "sACN universe 2", "packets": 44, "bytes": 28_000, "pps": 44.0, "bps": 224_000,
+             "resolved_name": "Lighting-Desk.local"},
+            {"proto": "sACN", "src_ip": "192.168.1.42", "src_mac": "00:1d:c1:42:00:01", "group_ip": "239.255.0.2",
+             "tag": "sACN universe 2", "packets": 44, "bytes": 28_000, "pps": 44.0, "bps": 224_000,
+             "resolved_name": "Backup-Desk.local"}]}},
         {"delay": 1.5, "event": ev("PTP", "ptp_message", "PTP message", "192.168.1.100", "00:40:94:12:34:56", "224.0.1.129",
                                    version=2, filter_key="PTPv2", ptp_msg_type="Announce", domain="0",
                                    grandmaster_id="00-40-94-ff-fe-12-34-56", priority1=128, clock_class=248,
@@ -99,16 +113,31 @@ def main() -> int:
     webbrowser.open(url)
 
     stop = threading.Event()
+    last_flows: Dict[str, Any] = {}
+
+    def wait(seconds: float) -> None:
+        """待つ間も、直近のフロー統計を 1 秒ごとに送り続ける(実アプリと同じ間隔)。"""
+        end = time.time() + seconds
+        while True:
+            left = end - time.time()
+            if left <= 0:
+                return
+            time.sleep(min(1.0, left))
+            if last_flows:
+                server.broadcast(last_flows)
+
     try:
         while not stop.is_set():
             for step in scenario():
-                time.sleep(step["delay"])
+                wait(step["delay"])
                 if "event" in step:
                     server.send_event({**step["event"], "ts": NOW()})
                     print(f"[demo] {step['event']['proto']}: {step['event']['event']}")
                 else:
                     server.broadcast(step["message"])
-            time.sleep(5.0)
+                    if step["message"].get("type") == "flow_stats":
+                        last_flows = step["message"]
+            wait(5.0)
     except KeyboardInterrupt:
         print("\nStopping the demo.")
     finally:

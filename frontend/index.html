@@ -44,6 +44,10 @@
     <!-- 2. フィルタ・状態バー: フィルタはサーバー側で適用され、全パケットはPCAPに記録されます -->
     <section class="filter-bar" aria-label="Display filters and status">
         <div class="filter-group" id="filter-protos">
+            <span class="filter-quick">
+                <button type="button" class="mini-btn" id="btn-protos-all" title="Tick every protocol">All</button>
+                <button type="button" class="mini-btn" id="btn-protos-none" title="Untick every protocol (then tick only the ones you want)">None</button>
+            </span>
             <label><input type="checkbox" value="IGMP" checked> IGMP</label>
             <label title="Dante default (IEEE 1588-2002)"><input type="checkbox" value="PTPv1" checked> PTPv1</label>
             <label title="AES67 / ST 2110 (IEEE 1588-2008/2019)"><input type="checkbox" value="PTPv2" checked> PTPv2</label>
@@ -53,6 +57,7 @@
             <label><input type="checkbox" value="LLMNR" checked> LLMNR</label>
             <label><input type="checkbox" value="Dante-ConMon" checked> Dante ConMon</label>
             <label><input type="checkbox" value="Dante-Audio" checked> Dante audio</label>
+            <label title="Lighting control (ANSI E1.31 / streaming ACN, UDP 5568)"><input type="checkbox" value="sACN" checked> sACN</label>
             <label><input type="checkbox" value="AES67-Audio" checked> AES67 audio</label>
             <label><input type="checkbox" value="Multicast-Other" checked> Other multicast</label>
         </div>
@@ -71,29 +76,42 @@
                 <label><input type="checkbox" value="Management" checked> Management</label>
             </div>
         </details>
-        <input type="text" id="filter-text" class="filter-input" placeholder="Filter by IP / MAC / group / device name" title="Only matching traffic is sent to the UI (everything is still recorded to PCAP)">
+        <input type="text" id="filter-text" class="filter-input" placeholder="Filter: IP / MAC / group / name / vlan N" title="Only matching traffic is sent to the UI (everything is still recorded to PCAP)">
         <label class="filter-raw" title="Show data-plane (audio) packets one by one. Use together with a filter."><input type="checkbox" id="filter-raw"> Show data plane per packet</label>
-        <span class="filter-sep"></span>
-        <input type="text" id="export-since" class="filter-input small" placeholder="From YYYY-MM-DD HH:MM:SS">
-        <input type="text" id="export-until" class="filter-input small" placeholder="To YYYY-MM-DD HH:MM:SS">
-        <select id="export-data-mode" class="filter-input small" title="How data-plane (audio) packets appear in the CSV">
-            <option value="aggregate">Audio: 1 s aggregate</option>
-            <option value="raw">Audio: every packet</option>
-            <option value="none">Audio: exclude</option>
-        </select>
-        <button class="log-btn" id="btn-export" title="Generate a CSV from the PCAP files (current filters apply)"><i class="fa-solid fa-file-csv"></i> Export CSV</button>
+    </section>
+
+    <!-- 2 行目: 操作と状態。CSV 出力の部品は「Export CSV」の中にまとめ、状態のチップを 1 行に並べる -->
+    <section class="status-bar" aria-label="Actions and status">
+        <details class="export-pop" id="export-pop">
+            <summary class="log-btn" title="Create a CSV from the recorded PCAP files"><i class="fa-solid fa-file-csv"></i> Export CSV <i class="fa-solid fa-chevron-down" aria-hidden="true"></i></summary>
+            <div class="export-panel">
+                <label>From <input type="text" id="export-since" class="filter-input small" placeholder="YYYY-MM-DD HH:MM:SS" title="Export from (leave empty for the beginning)"></label>
+                <label>To <input type="text" id="export-until" class="filter-input small" placeholder="YYYY-MM-DD HH:MM:SS" title="Export until (leave empty for now)"></label>
+                <label>Audio
+                    <select id="export-data-mode" class="filter-input small" title="How data-plane (audio) packets appear in the CSV">
+                        <option value="aggregate">1 s aggregate</option>
+                        <option value="raw">every packet</option>
+                        <option value="none">exclude</option>
+                    </select>
+                </label>
+                <p class="export-note">The current protocol and text filters apply.</p>
+                <button class="log-btn" id="btn-export" title="Generate the CSV now"><i class="fa-solid fa-file-csv"></i> Create CSV</button>
+            </div>
+        </details>
         <button class="log-btn" id="btn-capture" title="Stop/start the capture itself (nothing is written to PCAP while stopped; a new PCAP file starts on resume)">
             <i class="fa-solid fa-circle-stop"></i> <span id="capture-btn-label">Stop capture</span>
         </button>
-        <button class="log-btn" id="btn-shutdown" title="Exit IGMP-FLOW (monitoring and PCAP recording stop too)">
+        <button class="log-btn danger" id="btn-shutdown" title="Exit IGMP-FLOW (monitoring and PCAP recording stop too). Closing the browser does NOT stop monitoring; use this button or end IGMP-FLOW in Task Manager.">
             <i class="fa-solid fa-power-off"></i> Exit
         </button>
-        <span class="shutdown-note" title="The app keeps running after the browser is closed. To stop it, use the Exit button or end IGMP-FLOW in Task Manager.">ⓘ Monitoring continues even if you close the browser</span>
-        <span class="status-chip passive" id="passive-status" title="IGMP-FLOW only listens: this PC never sends an IGMP Join. With IGMP snooping, a switch forwards a group's stream only to ports that joined it, so stream data appears here only on a mirror (SPAN) port, on a switch that floods multicast, or when another app on this PC joined the group. A group shown without stream data is not proof that nothing is flowing. Likewise, other devices' Joins and Leaves (IGMP Reports) reach only the switch's router (querier) port, so they are visible here only on a mirror (SPAN) port."><i class="fa-solid fa-circle-info" aria-hidden="true"></i> Passive: this PC does not join groups</span>
+        <span class="bar-sep" aria-hidden="true"></span>
+        <span class="status-chip passive" id="passive-status" title="IGMP-FLOW only listens: this PC never sends an IGMP Join. With IGMP snooping, a switch forwards a group's stream only to ports that joined it, so stream data appears here only on a mirror (SPAN) port, on a switch that floods multicast, or when another app on this PC joined the group. A group shown without stream data is not proof that nothing is flowing. Likewise, other devices' Joins and Leaves (IGMP Reports) reach only the switch's router (querier) port, so they are visible here only on a mirror (SPAN) port."><i class="fa-solid fa-circle-info" aria-hidden="true"></i> Passive (this PC never joins)</span>
         <span class="status-chip" id="querier-status" title="IGMP querier status">Querier: checking</span>
         <span class="status-chip warn passive-hint" id="report-visibility" hidden title="IGMP Queries arrive, but no Join/Leave (IGMP Report) from any other device has been seen. With IGMP snooping, a switch forwards Reports only to its router (querier) port, so a normal port does not see them. Connect this PC to a mirror (SPAN) port of the uplink to the querier to see Joins and Leaves. If no device on the network has joined a group, this message also appears.">⚠ No Join/Leave seen: this port may not be a mirror (SPAN) port</span>
         <span class="status-chip" id="ptp-status" title="PTP anomaly detection (lost Announce, multiple grandmasters, interval mismatch)">PTP: ---</span>
         <span class="status-chip" id="capture-status" title="PCAP recording status">PCAP: ---</span>
+        <button type="button" class="status-chip warn chip-button" id="warn-summary" hidden title="Groups marked with a warning. Click to move to the next one."></button>
+        <span class="status-chip" id="group-summary" hidden title="When there are many multicast groups, groups in the same address range are shown as one summary node. Double-click a summary node to show each group; double-click one of those groups to put them back together."></span>
         <span class="status-chip" id="ui-notice" hidden></span>
     </section>
 
@@ -106,14 +124,59 @@
             
             <!-- マップ凡例（Legend）表示用カード -->
             <div class="map-legend" id="map-legend-card">
-                <h3><i class="fa-solid fa-circle-info"></i> Legend</h3>
+                <h3>
+                    <button type="button" class="legend-toggle" id="legend-toggle" aria-expanded="true" aria-controls="legend-items" title="Show or hide the legend">
+                        <i class="fa-solid fa-circle-info"></i> Legend <i class="fa-solid fa-chevron-up legend-chevron" aria-hidden="true"></i>
+                    </button>
+                </h3>
+                <div id="legend-items">
                 <div class="legend-item">
                     <span class="legend-icon icon-querier"><i class="fa-solid fa-crown"></i></span>
                     <span class="legend-label">Querier (liveness checks)</span>
                 </div>
                 <div class="legend-item">
-                    <span class="legend-icon icon-group"><i class="fa-solid fa-users"></i></span>
+                    <span class="legend-icon icon-group"><i class="fa-solid fa-tower-broadcast"></i></span>
                     <span class="legend-label">Multicast group (channel)</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-icon icon-sacn"><i class="fa-solid fa-lightbulb"></i></span>
+                    <span class="legend-label">sACN lighting (data seen)</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-icon icon-dante"><i class="fa-solid fa-volume-high"></i></span>
+                    <span class="legend-label">Dante audio (data seen)</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-icon icon-aes67"><i class="fa-solid fa-wave-square"></i></span>
+                    <span class="legend-label">AES67 audio (data seen)</span>
+                </div>
+                <div class="legend-item" title="239.255.x.x is used by both sACN and Dante. A Join carries no port number, so the kind is known only once stream data is seen.">
+                    <span class="legend-icon icon-unsure"><i class="fa-solid fa-circle-question"></i></span>
+                    <span class="legend-label">sACN or Dante (no data yet)</span>
+                </div>
+                <div class="legend-item" title="Line from a device to a group: the device joined the group (IGMP Join). Thicker when a summary node stands for many devices.">
+                    <span class="legend-icon icon-receiver"><i class="fa-solid fa-minus"></i></span>
+                    <span class="legend-label">Receiver — group (Join)</span>
+                </div>
+                <div class="legend-item" title="Dashed line from a querier to the groups of its VLAN (or subnet).">
+                    <span class="legend-icon icon-querier"><i class="fa-solid fa-ellipsis"></i></span>
+                    <span class="legend-label">Querier — group</span>
+                </div>
+                <div class="legend-item" title="Arrow from a sender to a group: stream data from that device was seen on this port in the last few seconds. Blue lines without arrows are receivers (IGMP Join).">
+                    <span class="legend-icon icon-sender"><i class="fa-solid fa-arrow-right"></i></span>
+                    <span class="legend-label">Sender → group (data seen)</span>
+                </div>
+                <div class="legend-item" title="More than one sender to one group, or stream data with no receiver's Join. Hover over the group for details.">
+                    <span class="legend-icon icon-warn"><i class="fa-solid fa-triangle-exclamation"></i></span>
+                    <span class="legend-label">⚠ Check this group</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-icon icon-family"><i class="fa-solid fa-layer-group"></i></span>
+                    <span class="legend-label">Many groups (double-click)</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-icon icon-subnet"><i class="fa-solid fa-server"></i></span>
+                    <span class="legend-label">Many devices (double-click)</span>
                 </div>
                 <div class="legend-item">
                     <span class="legend-icon icon-sync"><i class="fa-solid fa-clock"></i></span>
@@ -123,7 +186,17 @@
                     <span class="legend-icon icon-device"><i class="fa-solid fa-laptop"></i></span>
                     <span class="legend-label">Device (host)</span>
                 </div>
+                </div>
             </div>
+
+            <!-- 3. クリックしたノードの詳細(ツールチップは消えるので、読み比べられるよう固定のパネルに出す) -->
+            <aside class="detail-panel" id="detail-panel" hidden aria-label="Details of the selected node">
+                <div class="detail-head">
+                    <span id="detail-title"></span>
+                    <button type="button" class="toolbar-btn" id="detail-close" title="Close (Esc)"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div class="detail-body" id="detail-body"></div>
+            </aside>
             
             <!-- 操作用クイックツールバー -->
             <div class="canvas-toolbar">
@@ -146,9 +219,9 @@
         <section class="log-panel" aria-label="Real-time log">
             <div class="log-header">
                 <div class="panel-tabs" role="tablist">
-                    <button class="panel-tab active" role="tab" data-tab="log" id="tab-log"><i class="fa-solid fa-terminal"></i> Log <span class="tab-badge" id="badge-log" hidden></span></button>
-                    <button class="panel-tab" role="tab" data-tab="ptp" id="tab-ptp"><i class="fa-solid fa-clock"></i> PTP status <span class="tab-badge warn" id="badge-ptp" hidden></span></button>
-                    <button class="panel-tab" role="tab" data-tab="flow" id="tab-flow"><i class="fa-solid fa-wave-square"></i> Stream stats <span class="tab-badge" id="badge-flow" hidden></span></button>
+                    <button class="panel-tab active" role="tab" aria-selected="true" aria-controls="pane-log" data-tab="log" id="tab-log"><i class="fa-solid fa-terminal"></i> Log <span class="tab-badge" id="badge-log" hidden></span></button>
+                    <button class="panel-tab" role="tab" aria-selected="false" aria-controls="pane-ptp" data-tab="ptp" id="tab-ptp"><i class="fa-solid fa-clock"></i> PTP status <span class="tab-badge warn" id="badge-ptp" hidden></span></button>
+                    <button class="panel-tab" role="tab" aria-selected="false" aria-controls="pane-flow" data-tab="flow" id="tab-flow"><i class="fa-solid fa-wave-square"></i> Stream stats <span class="tab-badge" id="badge-flow" hidden></span></button>
                 </div>
                 <div class="log-actions">
                     <button class="log-btn" id="btn-maximize-panel" title="Expand the lower panel to full height (click again to restore)">
@@ -193,11 +266,11 @@
                 <table class="log-table" id="log-table">
                     <thead>
                         <tr>
-                            <th style="width: 20%;">Time</th>
-                            <th style="width: 15%;">Protocol</th>
-                            <th style="width: 25%;">Event</th>
-                            <th style="width: 25%;">Host (IP / MAC)</th>
-                            <th style="width: 15%;">Multicast group</th>
+                            <th class="col-time">Time</th>
+                            <th class="col-proto">Protocol</th>
+                            <th>Event</th>
+                            <th class="col-host">Host (IP / MAC)</th>
+                            <th class="col-group">Multicast group</th>
                         </tr>
                     </thead>
                     <tbody id="log-list-body">

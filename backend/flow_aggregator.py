@@ -1,16 +1,16 @@
 """IGMP-FLOW データ面フロー集計モジュール (flow_aggregator.py)
 
 音声ストリームのように毎秒大量に流れるデータ面パケットを、UIへ1件ずつ送らず
-(プロトコル, 送信元, グループ) 単位で一定間隔ごとに集計して配信するためのモジュールです。
+(VLAN, 送信元, グループ, プロトコル) 単位で一定間隔ごとに集計して配信するためのモジュールです。
 全パケットの記録はPCAPが担うため、ここでは表示用の統計のみを扱います。
 """
 
 import threading
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from backend.constants import AGGREGATOR_MAX_FLOWS
 
-FlowKey = Tuple[str, str, str]
+FlowKey = Tuple[Optional[int], str, str, str]
 
 
 class FlowAggregator:
@@ -26,14 +26,17 @@ class FlowAggregator:
         Args:
             event (Dict[str, Any]): PacketAnalyzer が生成したイベント。
         """
-        key: FlowKey = (event.get("proto", ""), event.get("src_ip", ""), event.get("group_ip", ""))
+        vlan, src, group, proto = (
+            event.get("vlan"), event.get("src_ip", ""), event.get("group_ip", ""), event.get("proto", ""),
+        )
+        key: FlowKey = (vlan, src, group, proto)
         with self._lock:
             flow = self._flows.get(key)
             if flow is None:
                 if len(self._flows) >= AGGREGATOR_MAX_FLOWS:
                     return  # 偽装した送信元を大量に使われても、1区間のメモリ使用量が増え続けないようにする
                 flow = {
-                    "proto": key[0], "src_ip": key[1], "group_ip": key[2],
+                    "proto": proto, "src_ip": src, "group_ip": group, "vlan": vlan,
                     "src_mac": event.get("src_mac", ""), "tag": event.get("tag", ""),
                     "packets": 0, "bytes": 0,
                 }

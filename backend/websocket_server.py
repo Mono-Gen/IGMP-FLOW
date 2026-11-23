@@ -58,7 +58,7 @@ class ClientState:
         """UIから届いたフィルタ指定を反映します。"""
         # 外部入力のため型を検証する(文字列以外やリスト以外は無視)。巨大な指定でメモリを使わせないよう長さも制限
         protos = spec.get("protos")
-        self.protos = {p for p in protos[:64] if isinstance(p, str)} if isinstance(protos, list) and protos else None
+        self.protos = {p for p in protos[:64] if isinstance(p, str)} if isinstance(protos, list) else None
         ptp_types = spec.get("ptp_types")
         self.ptp_types = (
             {p for p in ptp_types[:64] if isinstance(p, str)} if isinstance(ptp_types, list) and ptp_types else None
@@ -77,7 +77,8 @@ class ClientState:
             hay = " ".join(
                 str(data.get(k, "")) for k in ("src_ip", "src_mac", "group_ip", "resolved_name", "tag")
             ).lower()
-            if self.text not in hay:
+            vlan = data.get("vlan")
+            if self.text not in hay and (vlan is None or self.text != f"vlan {vlan}"):
                 return False
         return True
 
@@ -321,26 +322,40 @@ class WebSocketServer:
     async def _async_send_event(self, data: Dict[str, Any]) -> None:
         """パケットイベントを、各クライアントのフィルタ/レート上限を適用して配信します。"""
         message: Optional[str] = None
+        hidden_message: Optional[str] = None
         tasks = []
         is_data = data.get("plane") == PLANE_DATA
         for client, state in self._snapshot_clients():
             if is_data and not state.raw_data:
                 continue  # データ面は flow_stats で配信
-            if not state.matches(data) or not state.allow_rate(data.get("proto", "")):
+            matched = state.matches(data)
+            if not matched and data.get("proto") != "IGMP":
                 continue
-            if message is None:
-                message = json.dumps(data, ensure_ascii=False)
-            tasks.append(self._safe_send(client, message))
+            if not state.allow_rate(data.get("proto", "")):
+                continue
+            if matched:
+                if message is None:
+                    message = json.dumps(data, ensure_ascii=False)
+                tasks.append(self._safe_send(client, message))
+            else:
+                # 図(受信者・グループ)の更新にだけ使い、ログには出さない
+                if hidden_message is None:
+                    hidden_message = json.dumps({**data, "log": False}, ensure_ascii=False)
+                tasks.append(self._safe_send(client, hidden_message))
         if tasks:
             await asyncio.gather(*tasks)
 
     async def _async_send_stats(self, flows: List[Dict[str, Any]], interval_s: float) -> None:
-        """フロー統計をフィルタ適用して配信し、レート制限で破棄した件数も通知します。"""
+        """フロー統計を配信し、レート制限で破棄した件数も通知します。
+
+        図は送信元と受信者の全体から描くため全件を送り、各フローにフィルタへの一致(match)を付ける。
+        Stream stats の表は match が True のものだけを表示する。
+        """
         tasks = []
         for client, state in self._snapshot_clients():
-            visible = [f for f in flows if state.matches(f, is_flow=True)]
+            marked = [{**f, "match": state.matches(f, is_flow=True)} for f in flows]
             payload = json.dumps(
-                {"type": "flow_stats", "interval_s": interval_s, "flows": visible}, ensure_ascii=False
+                {"type": "flow_stats", "interval_s": interval_s, "flows": marked}, ensure_ascii=False
             )
             tasks.append(self._safe_send(client, payload))
             if state.suppressed:

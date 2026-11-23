@@ -25,7 +25,15 @@ Generated from the built-in demo (`python scripts/demo_simulator.py`); all names
   seen (the port is probably not a mirror port), and greys out groups whose stream data does not reach this port.
 - **PTP (v1 / v2) monitor**: per-clock message intervals (measured vs. declared), grandmaster ID, priorities and
   clock class. Warns on lost Announce, multiple grandmasters and interval mismatch.
-- **Protocol names**: mDNS, SSDP, SAP, LLMNR, Dante ConMon, Dante audio, AES67 audio, other multicast.
+- **Protocol names**: mDNS, SSDP, SAP, LLMNR, Dante ConMon, Dante audio, sACN (lighting), AES67 audio, other multicast.
+  sACN and Dante audio share the 239.255.x.x range and are told apart by UDP port (sACN 5568, Dante 4321).
+- **Large networks**: with many groups or devices, groups in the same address range and devices in the same /24 subnet
+  are drawn as one summary node. Double-click a summary node to see what it contains.
+- **Senders and warnings**: when stream data reaches this port, an arrow shows which device sends to which group. Groups with
+  more than one sender, or with stream data but no receiver, are marked ⚠. Click a node to highlight what it is connected to;
+  the protocol check boxes and the filter box apply to the map as well.
+- **VLANs**: when 802.1Q tags are visible, groups and queriers are shown per VLAN and "multiple queriers" is judged per VLAN.
+  On Windows many adapters remove the tags; see the manual (section 10).
 - **Lossless recording**: every captured packet is written to PCAP. Audio (data plane) packets keep headers only
   (128 bytes) to save space; control-plane packets are stored in full.
 - **CSV on demand**: CSV files are generated from the PCAP files (time range, protocol, group, text filters), so

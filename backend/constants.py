@@ -28,7 +28,7 @@ REPORT_VISIBILITY_GRACE_SECONDS: Final[int] = 30
 DEFAULT_LOG_DIR: Final[str] = data_dir("logs")
 
 # アプリのバージョン(リリース成果物の名前と --version 表示に使う。セマンティックバージョニング)
-APP_VERSION: Final[str] = "0.2.1"
+APP_VERSION: Final[str] = "0.3.0"
 
 # Npcap公式ダウンロードURL
 NPCAP_DOWNLOAD_URL: Final[str] = "https://nmap.org/npcap/"
@@ -193,6 +193,15 @@ DANTE_CONMON_IPS: Final[Set[str]] = {
 }
 # Dante ConMon用ポート範囲
 DANTE_CONMON_PORTS: Final[Set[int]] = {8700, 8701, 8702, 8703, 8704, 8705, 8706, 8707, 8708, 8800}
+
+# Dante マルチキャスト音声: 239.255.0.0/16 宛、UDP 4321 (Audinate "Which network ports does Dante use?")
+DANTE_AUDIO_PORT: Final[int] = 4321
+# sACN (ANSI E1.31、照明制御): ユニバースNは 239.255.(N>>8).(N&0xFF) 宛、UDP 5568。
+# Dante音声と宛先範囲が重なるため、ポートで区別する(Issue #1: 照明ネットワークがDanteと誤表示された)
+SACN_PORT: Final[int] = 5568
+# E1.31 で有効なユニバース番号の範囲(1〜63999)
+SACN_UNIVERSE_MIN: Final[int] = 1
+SACN_UNIVERSE_MAX: Final[int] = 63999
 
 # PTPマルチキャストIP範囲
 PTP_MULTICAST_IPS: Final[Set[str]] = {
