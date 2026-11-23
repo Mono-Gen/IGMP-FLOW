@@ -112,14 +112,30 @@ function initTopology() {
 const MULTICAST_LABELS = STR.multicastLabels;
 
 /**
+ * グループのキー。VLAN ごとに同じグループアドレスが別に使われ得るため、VLAN が分かるときは IP と VLAN を組にする。
+ * タグ無し(VLAN 不明)は IP そのもの(従来と同じ)。
+ */
+function groupKeyOf(ip, vlan) {
+    return vlan === null || vlan === undefined ? ip : `${ip}|v${vlan}`;
+}
+function ipOf(key) { return String(key).split("|")[0]; }
+function vlanOf(key) {
+    const m = String(key).match(/\|v(\d+)$/);
+    return m ? Number(m[1]) : null;
+}
+
+/**
  * 指定されたマルチキャストIPアドレスの人間フレンドリーな用途表記およびアイコンを解決します。
  */
-function getMulticastGroupLabel(ip) {
+function getMulticastGroupLabel(key) {
+    const ip = ipOf(key);
+    const vlan = vlanOf(key);
+    const vlanText = vlan === null ? "" : `\n${STR.vlanTag(vlan)}`;
     if (MULTICAST_LABELS[ip]) {
         const info = MULTICAST_LABELS[ip];
-        return `${ip}\n${info.icon} ${info.tag}`;
+        return `${ip}\n${info.icon} ${info.tag}${vlanText}`;
     }
-    return `${ip}\n${groupKindLabel(ip)}`;
+    return `${ip}\n${groupKindLabel(key)}${vlanText}`;
 }
 
 /**
@@ -138,8 +154,9 @@ function sacnUniverse(ip) {
  * IGMP Join にはポート番号が無く、239.255.x.x は sACN と Dante のどちらもあり得るため、
  * 観測前は "sacn-or-dante" とする(Issue #1: 照明の sACN が Dante と表示された)。
  */
-function groupKind(ip) {
-    const proto = groupProto.get(ip);
+function groupKind(key) {
+    const ip = ipOf(key);
+    const proto = groupProto.get(key);
     if (proto === "sACN") return "sacn";
     if (proto === "Dante-Audio") return "dante";
     if (proto === "AES67-Audio") return "aes67";
@@ -149,9 +166,9 @@ function groupKind(ip) {
 }
 
 /** グループの用途表記(種類ごと)。 */
-function groupKindLabel(ip) {
-    const universe = sacnUniverse(ip);
-    switch (groupKind(ip)) {
+function groupKindLabel(key) {
+    const universe = sacnUniverse(ipOf(key));
+    switch (groupKind(key)) {
         case "sacn": return universe !== null ? STR.groupSacn(universe) : "sACN";
         case "dante": return STR.groupDante;
         case "aes67": return STR.groupAes67;
@@ -203,7 +220,9 @@ function updateNode(id, label, type, subtitle = "") {
     // IPアドレスが "0.0.0.0" (IP未割り当てのスイッチ) の場合は分かりやすい表記にする
     if (id === "0.0.0.0") {
         if (targetType === "querier") {
-            targetLabel = STR.switchNoIp;
+            // VLAN 表記(ラベル末尾の " VLAN n")は残す
+            const vlanPart = String(label).match(/ VLAN [\d, VLAN]+$/);
+            targetLabel = STR.switchNoIp + (vlanPart ? vlanPart[0] : "");
         } else {
             targetLabel = STR.deviceNoIp;
         }
@@ -284,13 +303,19 @@ let groupRenderTimer = null;
 /**
  * グループの系統(まとめる単位)を返す。
  * 239.255.0.1〜239.255.249.255 は sACN/Dante の範囲として 1 系統、224.0.0.x はリンクローカル、それ以外は /16 単位。
+ * VLAN が分かるときは VLAN ごとに別の系統にする(別の VLAN のグループを 1 つにまとめない)。
  */
-function groupFamily(ip) {
+function groupFamily(key) {
+    const ip = ipOf(key);
+    const vlan = vlanOf(key);
     const p = ip.split(".");
-    if (sacnUniverse(ip) !== null) return { key: "fam:sacn-dante", label: STR.familySacnDante };
-    if (p[0] === "224" && p[1] === "0" && p[2] === "0") return { key: "fam:224.0.0", label: STR.familyLinkLocal };
-    if (p[0] === "239" && p[1] === "255") return { key: "fam:239.255-other", label: STR.family239255Other };
-    return { key: `fam:${p[0]}.${p[1]}`, label: `${p[0]}.${p[1]}.x.x` };
+    let fam;
+    if (sacnUniverse(ip) !== null) fam = { key: "fam:sacn-dante", label: STR.familySacnDante };
+    else if (p[0] === "224" && p[1] === "0" && p[2] === "0") fam = { key: "fam:224.0.0", label: STR.familyLinkLocal };
+    else if (p[0] === "239" && p[1] === "255") fam = { key: "fam:239.255-other", label: STR.family239255Other };
+    else fam = { key: `fam:${p[0]}.${p[1]}`, label: `${p[0]}.${p[1]}.x.x` };
+    if (vlan !== null) fam = { key: `${fam.key}|v${vlan}`, label: `${fam.label} ${STR.vlanTag(vlan)}` };
+    return fam;
 }
 
 function isGroupDataSeen(groupIp) {
@@ -501,7 +526,11 @@ function renderGroups() {
             const protos = hostProtos.get(n.id);
             const protoTicked = filter.protos === null || (Boolean(protos) && [...protos].some(k => filter.protos.has(k)));
             const byProto = !linkedHosts.has(n.id) && !protoTicked;
-            const byText = filter.text && !linkedHosts.has(n.id) && !nodeMatchesText(n, filter.text);
+            const wantedVlan = vlanQuery(filter.text);
+            const querierOfVlan = n.customType === "querier" && wantedVlan !== null
+                && (querierVlans.get(n.id) || new Set()).has(wantedVlan);
+            const byText = filter.text && !linkedHosts.has(n.id) && !querierOfVlan
+                && (wantedVlan !== null || !nodeMatchesText(n, filter.text));
             const byIgmp = n.customType === "querier" && !drawReceivers; // クエリアは IGMP の機器
             if (byProto || byText || byIgmp) filteredOut.add(n.id);
         });
@@ -543,7 +572,9 @@ function renderGroups() {
         senders.forEach(h => wantEdges.set(`${shown(h)}_src_${ip}`, { from: shown(h), to: ip, kind: "sender" }));
     });
 
+    familyGroups.clear();
     families.forEach((f, key) => {
+        familyGroups.set(key, f.groups);
         wantNodes.set(key, familyNodeData(key, f));
         if (drawReceivers) f.members.forEach(h => addReceiverEdge(wantEdges, shown(h), key));
         f.senders.forEach(h => wantEdges.set(`${shown(h)}_src_${key}`, { from: shown(h), to: key, kind: "sender" }));
@@ -552,8 +583,10 @@ function renderGroups() {
     // クエリアとグループ(まとめ)を薄い線で結び、トポロジを紐付ける
     const queriers = nodes.get({ filter: (n) => n.customType === "querier" });
     if (drawReceivers) {
-        queriers.forEach(q => {
-            wantNodes.forEach((_, id) => wantEdges.set(`${q.id}_to_${id}`, { from: q.id, to: id, kind: "query" }));
+        wantNodes.forEach((node, id) => {
+            if (node.customType !== "group" && node.customType !== "family") return;
+            queriersFor(id, node, queriers).forEach(q =>
+                wantEdges.set(`${q.id}_to_${id}`, { from: q.id, to: id, kind: "query" }));
         });
     }
 
@@ -605,6 +638,32 @@ function renderGroups() {
     applyFocus();
 }
 
+/**
+ * グループ(まとめ)ノードと結ぶクエリア。
+ * - VLAN が分かるグループ: 同じ VLAN の Query を送ったクエリアだけ。
+ * - VLAN が分からないグループ: VLAN 不明のクエリアのうち、受信機・送信元と同じ /24 にいるもの。
+ *   1 台も合わなければ、VLAN 不明のクエリア全部(サブネットで推測できない場合は従来どおり)。
+ */
+function queriersFor(id, node, queriers) {
+    const vlan = node.customType === "family" ? vlanOf(id) : vlanOf(id);
+    const sameVlan = queriers.filter(q => (querierVlans.get(q.id) || new Set([null])).has(vlan));
+    if (vlan !== null || sameVlan.length <= 1) return sameVlan;
+    const keys = node.customType === "group" ? [id] : (familyGroups.get(id) || []);
+    const subnets = new Set();
+    keys.forEach(k => {
+        const g = groupModel.get(k);
+        if (!g) return;
+        [...g.members, ...liveSenders(g)].forEach(h => { const s = hostSubnetKey(h); if (s) subnets.add(s); });
+    });
+    const matched = sameVlan.filter(q => subnets.has(hostSubnetKey(q.id)));
+    return matched.length ? matched : sameVlan;
+}
+
+// クエリアID -> そのクエリアが Query を送った VLAN の集合(タグ無しは null)
+const querierVlans = new Map();
+// まとめノードのキー -> まとめたグループのキー(クエリアの線をサブネットで選ぶため)
+const familyGroups = new Map();
+
 // フィルタで隠す対象になるノードの種類(グループとまとめノードは renderGroups が作り直す)
 const FILTERABLE_TYPES = ["host", "querier", "sync"];
 
@@ -646,7 +705,8 @@ function addReceiverEdge(wantEdges, from, to) {
  * noReceiver: データは届いているが受信者の Join が無い。ミラーではないポートでは他の機器の Join が
  *   見えないのが普通なので、Join が見える環境(他の機器の Join を観測済みで、見えない警告が出ていない)でだけ判定する。
  */
-function groupStatus(ip, g, senders, receiversVisible) {
+function groupStatus(key, g, senders, receiversVisible) {
+    const ip = ipOf(key);
     // 名前付きのアドレス(PTP・mDNS 等)とリンクローカル(224.0.0.x)は、複数の送信元や Join 無しが正常なので対象外
     if (KNOWN_GROUP_FILTER_KEYS[ip] || ip.startsWith("224.0.0.")) return { multi: false, noReceiver: false };
     return {
@@ -694,9 +754,12 @@ function groupIcon(kind, seen) {
 }
 
 /** 個別のグループノード。データ面の観測状態をツールチップと色で示す。 */
-function groupNodeData(ip, g, senders, status) {
-    const seen = isGroupDataSeen(ip);
+function groupNodeData(key, g, senders, status) {
+    const ip = ipOf(key);
+    const vlan = vlanOf(key);
+    const seen = isGroupDataSeen(key);
     const lines = [g.title || STR.groupTitle(ip), seen ? STR.groupDataSeen : STR.groupDataNotSeen];
+    if (vlan !== null) lines.splice(1, 0, STR.vlanTag(vlan));
     // 送信元: データを観測した時だけ分かる。見えないときは「不明」と書き、「いない」とは書かない
     lines.push(senders.length ? STR.groupSenders(listForTooltip(senders.map(hostDisplay))) : STR.groupSendersUnknown);
     const requested = new Set();
@@ -705,13 +768,13 @@ function groupNodeData(ip, g, senders, status) {
     lines.push(STR.groupReceivers(g.members.size));
     if (status.multi) lines.push(STR.groupMultiSender);
     if (status.noReceiver) lines.push(STR.groupNoReceiver);
-    const fam = groupFamily(ip);
+    const fam = groupFamily(key);
     if (expandedFamilies.has(fam.key)) lines.push(STR.familyCollapseHint);
-    const kind = MULTICAST_LABELS[ip] ? "generic" : groupKind(ip);
+    const kind = MULTICAST_LABELS[ip] ? "generic" : groupKind(key);
     const warn = status.multi || status.noReceiver;
     return {
-        id: ip,
-        label: (warn ? STR.warnMark : "") + getMulticastGroupLabel(ip),
+        id: key,
+        label: (warn ? STR.warnMark : "") + getMulticastGroupLabel(key),
         shape: "icon",
         icon: groupIcon(kind, seen),
         title: tooltipElement(lines.join("\n")),
@@ -723,7 +786,7 @@ function groupNodeData(ip, g, senders, status) {
 
 /** 系統ごとのまとめノード。データを観測したグループが 1 つでもあれば色付きにする。 */
 function familyNodeData(key, f) {
-    const sorted = f.groups.slice().sort(compareIp);
+    const sorted = f.groups.map(ipOf).sort(compareIp);
     const range = `${sorted[0]} – ${sorted[sorted.length - 1]}`;
     // 系統内の種類が 1 つに決まればその色、混在ならまとめ用の色
     const kind = f.kinds.size === 1 ? Array.from(f.kinds)[0] : null;
@@ -808,6 +871,8 @@ function resetGroupModel() {
     lastSeenSnapshot = "";
     othersReportsSeen = false;
     hostProtos.clear();
+    querierVlans.clear();
+    familyGroups.clear();
     focusId = null;
     dimmedEdges.clear();
     renderGroupSummary(new Map());
@@ -841,20 +906,31 @@ function mapFilter() {
     return { protos, text, active: protos !== null || text !== "" };
 }
 
+/** 絞り込み文字列が「vlan 10」の形なら、その VLAN 番号。そうでなければ null(サーバー側と同じく完全一致で扱う)。 */
+function vlanQuery(text) {
+    const m = String(text || "").trim().toLowerCase().match(/^vlan\s+(\d+)$/);
+    return m ? Number(m[1]) : null;
+}
+
 function nodeMatchesText(node, text) {
     const title = node.title && node.title.textContent !== undefined ? node.title.textContent : String(node.title || "");
     return [node.id, node.label, title].some(v => String(v || "").toLowerCase().includes(text));
 }
 
-function isGroupShownByFilter(ip, g, filter, drawReceivers) {
+function isGroupShownByFilter(key, g, filter, drawReceivers) {
+    const ip = ipOf(key);
     // IGMP を外すと受信側(Join)の線を描かないので、送信を観測していないグループは何も表示する物が無い
     if (!drawReceivers && liveSenders(g).length === 0) return false;
     if (filter.protos !== null) {
-        const keys = KNOWN_GROUP_FILTER_KEYS[ip] || KIND_FILTER_KEYS[groupKind(ip)] || ["Multicast-Other"];
+        const keys = KNOWN_GROUP_FILTER_KEYS[ip] || KIND_FILTER_KEYS[groupKind(key)] || ["Multicast-Other"];
         if (!keys.some(k => filter.protos.has(k))) return false;
     }
     if (filter.text) {
-        const groupText = `${ip} ${getMulticastGroupLabel(ip)}`.toLowerCase();
+        // 「vlan 10」でも探せるように、ラベル(VLAN 表記を含む)とあわせて照合する
+        const vlan = vlanOf(key);
+        const wanted = vlanQuery(filter.text);
+        if (wanted !== null) return vlan === wanted;
+        const groupText = `${ip} ${getMulticastGroupLabel(key)}`.toLowerCase();
         if (groupText.includes(filter.text)) return true;
         const hostIds = [...(drawReceivers ? g.members : []), ...liveSenders(g)];
         return hostIds.some(h => {
@@ -955,6 +1031,7 @@ function handleNetworkEvent(data) {
     const srcIp = data.src_ip;
     noteHostProto(srcIp, data.filter_key || data.proto);
     const groupIp = data.group_ip;
+    const groupKey = groupKeyOf(groupIp, data.vlan); // VLAN ごとに別のグループとして扱う
     const deviceName = data.resolved_name || srcIp;
     
     // MACアドレスの表示補填
@@ -965,7 +1042,16 @@ function handleNetworkEvent(data) {
         
         // A-1. 生存確認（クエリ）
         if (data.is_querier) {
-            updateNode(srcIp, `${deviceName}\n${STR.querierTag}`, "querier", subtitle);
+            const vlan = data.vlan === undefined ? null : data.vlan;
+            if (!querierVlans.has(srcIp)) querierVlans.set(srcIp, new Set());
+            const vlans = querierVlans.get(srcIp);
+            if (!vlans.has(vlan)) {
+                vlans.add(vlan);
+                scheduleGroupRender(); // このクエリアと結ぶグループが増える
+            }
+            const tagged = [...vlans].filter(v => v !== null).sort((a, b) => a - b);
+            const vlanText = tagged.length ? ` ${tagged.map(v => STR.vlanTag(v)).join(", ")}` : "";
+            updateNode(srcIp, `${deviceName}\n${STR.querierTag}${vlanText}`, "querier", subtitle);
         }
         
         // A-2. 受信開始（ジョイン）
@@ -974,17 +1060,17 @@ function handleNetworkEvent(data) {
             updateNode(srcIp, deviceName, "host", subtitle);
             
             // グループへの参加をモデルに記録(グループ/まとめノードと線は renderGroups が描く)
-            groupJoin(srcIp, groupIp, STR.groupTitle(groupIp), requestedSources(data), data.record_type);
+            groupJoin(srcIp, groupKey, STR.groupTitle(groupIp), requestedSources(data), data.record_type);
         }
 
         // A-3. 受信停止（リーブ）
         else if (data.event_code === "igmp_leave") {
-            groupLeave(srcIp, groupIp);
+            groupLeave(srcIp, groupKey);
         }
 
         // A-4. IGMPv3 の送信元の取り消し(BLOCK_OLD_SOURCES)
         else if (data.event_code === "igmp_source_update" && data.record_type === "BLOCK_OLD_SOURCES") {
-            groupBlockSources(srcIp, groupIp, data.sources || []);
+            groupBlockSources(srcIp, groupKey, data.sources || []);
         }
     }
 
@@ -997,8 +1083,8 @@ function handleNetworkEvent(data) {
         // 共通同期グループにエッジを紐付け
         // PTPメッセージ自体がこのグループ宛てのデータ面パケットなので「観測あり」とする
         // PTP クロックはこのグループへ送信しているので、送信元として記録する
-        recordSender(srcIp, groupIp, STR.ptpGroupTitle(groupIp));
-        markGroupDataSeen(groupIp);
+        recordSender(srcIp, groupKey, STR.ptpGroupTitle(groupIp));
+        markGroupDataSeen(groupKey);
     }
 
     // C. 汎用制御（mDNS, ConMon等）のノード追加表示
@@ -1168,8 +1254,9 @@ function renderFlowStats(flows) {
             updateNode(f.src_ip, f.resolved_name || f.src_ip, "host", `IP: ${f.src_ip}\nMAC: ${f.src_mac}`);
         }
         noteHostProto(f.src_ip, f.proto);
-        recordSender(f.src_ip, f.group_ip, STR.groupTitle(f.group_ip));
-        markGroupDataSeen(f.group_ip, f.proto);
+        const key = groupKeyOf(f.group_ip, f.vlan);
+        recordSender(f.src_ip, key, STR.groupTitle(f.group_ip));
+        markGroupDataSeen(key, f.proto);
     });
 }
 
@@ -1360,12 +1447,26 @@ function renderPtpStatus(s) {
 /** IGMPクエリアの状態(不在/複数/正常)をチップに反映する。 */
 function renderQuerierStatus(s) {
     const el = document.getElementById("querier-status");
-    if (s.state === "ok") {
+    const byVlan = Array.isArray(s.by_vlan) ? s.by_vlan : [];
+    if (s.state === "ok" && byVlan.length > 1 && byVlan.some(v => v.vlan !== null && v.vlan !== undefined)) {
+        // VLAN ごとにクエリアがいるのは正常。VLAN ごとの選出結果を並べる
+        el.textContent = STR.querierPerVlan(byVlan.map(v => STR.querierVlanItem(v.vlan, v.elected, v.subnet)).join(" / "));
+        el.className = "status-chip ok";
+    } else if (s.state === "ok" && s.subnet_split) {
+        // タグは見えないが、別のサブネットのクエリアが見えている(NIC がタグを外している可能性)
+        el.textContent = STR.querierSubnetSplit(s.queriers.map(q => q.ip).join(", "));
+        el.className = "status-chip ok";
+    } else if (s.state === "ok") {
         const q = s.queriers[0];
         el.textContent = STR.querierOk(q.ip, q.version);
         el.className = "status-chip ok";
     } else if (s.state === "multiple") {
-        el.textContent = STR.querierMultiple(s.queriers.map(q => q.ip).join(", "), s.elected);
+        // 競合しているのは同じ VLAN(タグ無しは同じ /24)の中だけ。その VLAN のクエリアと選出結果を示す
+        const clash = byVlan.filter(v => v.state === "multiple");
+        el.textContent = clash.length
+            ? clash.map(v => (v.vlan === null || v.vlan === undefined ? (v.subnet ? `${v.subnet}: ` : "") : `${STR.vlanTag(v.vlan)}: `)
+                + STR.querierMultiple(v.queriers.map(q => q.ip).join(", "), v.elected)).join(" / ")
+            : STR.querierMultiple(s.queriers.map(q => q.ip).join(", "), s.elected);
         el.className = "status-chip warn";
     } else if (s.state === "none") {
         el.textContent = STR.querierNone;

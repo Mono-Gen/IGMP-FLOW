@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 # ScapyのインポートエラーおよびNpcap未インストール状態をトラップするための準備
 try:
-    from scapy.all import Packet, IP, UDP, Ether
+    from scapy.all import Dot1Q, Packet, IP, UDP, Ether
     import scapy.contrib.igmp
     IGMP = scapy.contrib.igmp.IGMP
     SCAPY_AVAILABLE = True
@@ -24,6 +24,7 @@ except ImportError:
     class IP: pass
     class UDP: pass
     class Ether: pass
+    class Dot1Q: pass
     class IGMP: pass
     SCAPY_AVAILABLE = False
 
@@ -482,7 +483,7 @@ class PacketAnalyzer:
         """Scapyパケット1件を解釈し、可視化・ログ用のイベント辞書のリストで返します。
 
         各イベントには共通フィールドとして `ts`(パケット時刻, epoch秒) / `plane`(control|data) /
-        `frame_len` を付与します。
+        `frame_len` / `vlan` を付与します。
 
         Args:
             packet (Packet): Scapyパケット。
@@ -525,12 +526,15 @@ class PacketAnalyzer:
         events = self._classify(packet, ip_layer, base)
 
         frame_len = self._frame_len(packet) if events else 0
+        vlan_tag = packet.getlayer(Dot1Q)
+        vlan = vlan_tag.vlan if vlan_tag is not None else None
         for ev in events:
             ev.pop("dst_ip", None)
             ev["src_ip"] = src_ip
             ev["src_mac"] = src_mac
             ev["ts"] = ts
             ev["frame_len"] = frame_len
+            ev["vlan"] = vlan
             ev.setdefault("plane", PLANE_CONTROL)
         return events
 

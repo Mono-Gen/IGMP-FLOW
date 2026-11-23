@@ -53,7 +53,7 @@ from backend.websocket_server import WebSocketServer
 
 # キャプチャフィルタ(BPF): IGMP、IPv4マルチキャスト全般、ARP(IP-MAC学習用)
 # ユニキャストのUDP(Dante音声のユニキャスト等)は本ツールの対象外のため取得しない
-CAPTURE_BPF = "igmp or ip multicast or arp"
+CAPTURE_BPF = "igmp or ip multicast or arp or (vlan and (igmp or ip multicast or arp))"
 
 # 端末が送るIGMP Report由来のイベント(Join/Leave等)。Report可視性の診断に数える
 IGMP_REPORT_EVENT_CODES = frozenset({"igmp_join", "igmp_leave", "igmp_source_update", "igmp_report_unparsed"})
@@ -206,6 +206,7 @@ class IGMPFlowApp:
             src_mac=event_data.get("src_mac", ""),
             group_ip=event_data.get("group_ip", ""),
             resolved_name=resolved_name,
+            vlan=event_data.get("vlan"),
         )
 
     def _packet_callback(self, packet: Packet) -> None:
@@ -246,6 +247,7 @@ class IGMPFlowApp:
                     self.querier_monitor.observe_query(
                         src_ip, event_data.get("src_mac", ""), event_data.get("version", 0),
                         general=event_data.get("event_code") == "igmp_query",
+                        vlan=event_data.get("vlan"),
                     )
                 elif event_data.get("event_code") in IGMP_REPORT_EVENT_CODES:
                     self.querier_monitor.observe_report(src_ip, event_data.get("src_mac", ""))

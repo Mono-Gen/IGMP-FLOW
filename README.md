@@ -32,6 +32,8 @@ Generated from the built-in demo (`python scripts/demo_simulator.py`); all names
 - **Senders and warnings**: when stream data reaches this port, an arrow shows which device sends to which group. Groups with
   more than one sender, or with stream data but no receiver, are marked ⚠. Click a node to highlight what it is connected to;
   the protocol check boxes and the filter box apply to the map as well.
+- **VLANs**: when 802.1Q tags are visible, groups and queriers are shown per VLAN and "multiple queriers" is judged per VLAN.
+  On Windows many adapters remove the tags; see the manual (section 10).
 - **Lossless recording**: every captured packet is written to PCAP. Audio (data plane) packets keep headers only
   (128 bytes) to save space; control-plane packets are stored in full.
 - **CSV on demand**: CSV files are generated from the PCAP files (time range, protocol, group, text filters), so

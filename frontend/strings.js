@@ -116,6 +116,12 @@ const STR = {
     ptpNone: "PTP: ---",
     querierOk: (ip, v) => `Querier: ${ip} (IGMPv${v})`,
     querierMultiple: (ips, elected) => `Multiple queriers: ${ips} (should be ${elected})`,
+    // VLANs: one querier per VLAN is normal
+    vlanTag: (v) => `VLAN ${v}`,
+    querierPerVlan: (items) => `Queriers: ${items}`,
+    querierVlanItem: (vlan, ip, subnet) => vlan === null || vlan === undefined
+        ? `${subnet || "untagged"} ${ip}` : `VLAN ${vlan} ${ip}`,
+    querierSubnetSplit: (ips) => `Queriers in different subnets: ${ips} (probably separate VLANs; VLAN tags not visible)`,
     querierNone: "No querier! (IGMP snooping may not work)",
     querierChecking: "Querier: checking",
 

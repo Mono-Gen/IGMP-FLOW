@@ -109,7 +109,8 @@ Npcap のインストール方法によっては（例：「Restrict Npcap drive
 
 - **誰がどのグループに参加している？** 図を見るか、ログを *IGMP* で絞り、グループのアドレスを絞り込み欄に入力します。
 - **IGMP クエリアはいる？** *Querier* チップを確認します。「No querier!」はスイッチの IGMP スヌーピングが働かない恐れ、「Multiple queriers」は
-  全クエリアと、本来選ばれるべきもの（最小の IP）を表示します。Query のバージョン（v1/v2/v3）、ロバストネス、間隔は、ログの詳細と CSV で見られます。
+  同じ VLAN に 2 台以上のクエリアがいることを示し、本来選ばれるべきもの（最小の IP）を表示します。VLAN ごとに 1 台いるのは
+  正常です（10 章）。Query のバージョン（v1/v2/v3）、ロバストネス、間隔は、ログの詳細と CSV で見られます。
 - **全部見えている？** 黄色の *No Join/Leave seen* チップが出ていないこと、気になるグループが灰色ではなく色付きで表示されていることを確認します。
   そうでなければ、PC が IGMP スヌーピング有効スイッチの通常ポートにつながっている可能性が高いので、ミラー（SPAN）ポートにつなぎ替えます（1 章参照）。
 - **クロックは正常？** *PTP status* を開きます。Dante は PTPv1、AES67/ST 2110 は PTPv2 を使い、両方が共存できます。ドメインごとにグランドマスターが 1 台だけ
@@ -124,7 +125,7 @@ Npcap のインストール方法によっては（例：「Restrict Npcap drive
 | 内容 | 場所 |
 |---|---|
 | PCAP の記録、CSV の出力、ログ | `%LOCALAPPDATA%\IGMP-FLOW\data\`（`captures`、`exports`、`logs`）。環境変数 `IGMP_FLOW_DATA_DIR` で変更できます |
-| CSV の列 | Timestamp、Event、Device Name、IP Address、MAC Address、Multicast Group、Protocol、Packets、Detail、Event Code |
+| CSV の列 | Timestamp、Event、Device Name、IP Address、MAC Address、Multicast Group、Protocol、Packets、Detail、Event Code、VLAN（タグ無しは空欄） |
 
 PCAP は、音声パケットをヘッダのみ（先頭 128 バイト）で保存して容量を抑え、制御系（IGMP、PTP、mDNS など）は全長で保存します。
 これらのファイルには、実際の IP/MAC アドレスと機器名が含まれます。機密として扱い、公開の場所にアップロードしないでください。
@@ -144,6 +145,7 @@ python -m backend.pcap_export <file.pcap> -o out.csv --proto IGMP --proto PTPv2 
 | 起動時に「Npcap がインストールされていません」 | Npcap をインストール（1.2 節）して、再起動する |
 | NIC の一覧が空、または何も取得されない | 管理者として実行する。Npcap の導入を確認する。ミラーポートにつないだ NIC を選ぶ。スイッチ側のミラー設定を確認する |
 | 図がラベルの塊になって読めない | 0.2.2 以降に更新する。グループや機器が多いとまとめノードで表示する |
+| VLAN が複数あるネットワークで「Multiple queriers」と出る | 0.2.2 からは、同じ VLAN（タグが無ければ同じ /24）に 2 台以上いるときだけ出す。10 章を参照 |
 | 照明（sACN）のネットワークなのに「Dante」と表示される | 0.2.2 で修正。sACN と Dante を UDP ポートで見分ける。Join しか見えていないグループは「sACN universe N or Dante」と表示する |
 | グループが図に出ているのに灰色、または Stream stats に出ない | IGMP Snooping 環境でミラーではないポートなら正常。IGMP-FLOW は Join しないので、スイッチがこのポートへストリームを転送しない。ストリーム本体を見るにはミラー（SPAN）ポートを使う |
 | 「No Join/Leave seen」が表示される | PC が IGMP スヌーピング有効スイッチの通常ポートにつながっている。クエリアへのアップリンク（または機器のポート）を、この PC のポートへミラーする |
@@ -200,3 +202,23 @@ sACN と Dante はどちらも 239.255.x.x を使います。IGMP の Join に�
 
 出典：IANA *IPv4 Multicast Address Space Registry*、Audinate *Dante Information for Network Administrators*、
 RFC 2974（SAP）、RFC 4795（LLMNR）、UPnP Device Architecture（SSDP）、ANSI E1.31（sACN）。
+
+## 10. VLAN で分かれたネットワーク
+
+音声・照明・映像・制御を別々の VLAN に分け、VLAN ごとに IGMP クエリアを置くことはよくあります。IGMP は VLAN ごとに
+動くので、VLAN ごとにクエリアが 1 台いるのは正常です。
+
+- **複数の VLAN をまとめて見るには**、トランクのポート（または複数の VLAN）を PC のポートへミラーします。通常のアクセス
+  ポートでは、その VLAN だけが見えます。
+- **VLAN のタグが見える場合**は、各イベントの VLAN の番号を記録します（CSV では最後の列 *VLAN*）。図では、別の VLAN の
+  同じグループアドレスを、*VLAN n* と付けた別のノードで表示し、クエリアは同じ VLAN のグループとだけ線で結びます。
+  *Querier* チップには VLAN ごとの選ばれたクエリアを表示し、「Multiple queriers」は 1 つの VLAN に 2 台以上いるときだけ
+  出します。絞り込み欄に `vlan 10` と入力すると、その VLAN だけを表示します。
+- **Windows ではタグが見えないことが多い**：多くのネットワークアダプターのドライバーは、キャプチャソフトに渡す前に
+  802.1Q のタグを外します。タグを残す設定（ドライバーやレジストリ）を持つアダプターもあります（Intel は自社アダプター用の
+  設定を公開しています）。お使いのアダプターの資料を確認してください。タグが無いと、IGMP-FLOW は VLAN を区別できず、
+  別の VLAN の同じグループアドレスを 1 つのノードで表示します。その場合は、グループにつながる機器と同じ /24 サブネットの
+  クエリアとだけ線で結び、サブネットの違うクエリアが見えたときは、複数クエリアの警告ではなく「別の VLAN の可能性」と
+  チップに表示します。
+
+出典：Wireshark wiki *CaptureSetup/VLAN*、Intel サポート記事 000005498（Intel アダプターで VLAN タグを残す設定）。

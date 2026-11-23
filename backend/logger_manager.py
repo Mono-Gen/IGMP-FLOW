@@ -9,12 +9,15 @@ AI rulesに基づき、相対パスでのログ保存、厳密な型ヒント、
 
 import csv
 import datetime
+import logging
 import os
 import threading
 from typing import Optional
 
 from backend.constants import DEFAULT_LOG_DIR
 from backend.csv_safety import csv_safe
+
+logger = logging.getLogger("IGMP-FLOW.LiveCSV")
 
 
 class LoggerManager:
@@ -29,6 +32,7 @@ class LoggerManager:
         self.log_dir = log_dir
         self._lock = threading.Lock()
         self._last_date_str: Optional[str] = None
+        self._current_log_filepath = ""
         
         # ログ保存用ディレクトリを安全に自動生成（相対パス）
         self._ensure_log_dir_exists()
@@ -51,11 +55,17 @@ class LoggerManager:
         now = datetime.datetime.now()
         date_str = now.strftime("%Y-%m-%d")
         
-        # 日付文字列を更新
-        self._last_date_str = date_str
-        
-        filename = f"igmp_flow_{date_str}.csv"
-        return os.path.join(self.log_dir, filename)
+        if self._last_date_str != date_str:
+            filepath = os.path.join(self.log_dir, f"igmp_flow_{date_str}.csv")
+            if os.path.exists(filepath):
+                with open(filepath, mode="r", newline="", encoding="utf-8-sig") as f:
+                    header = next(csv.reader(f), [])
+                # 更新前のCSVに列数の異なる行を混ぜないよう、同日の新形式は別ファイルに記録する
+                if header[-1:] != ["VLAN"]:
+                    filepath = os.path.join(self.log_dir, f"igmp_flow_{date_str}_vlan.csv")
+            self._current_log_filepath = filepath
+            self._last_date_str = date_str
+        return self._current_log_filepath
 
     def _write_csv_headers(self, filepath: str) -> None:
         """CSVファイルの新規作成時にヘッダ行を書き込みます。
@@ -69,16 +79,13 @@ class LoggerManager:
             "Device Name",    # mDNS解決機器名 (解決できない場合は空欄/IP)
             "IP Address",     # IPアドレス
             "MAC Address",    # MACアドレス
-            "Multicast Group" # 対象マルチキャストIP
+            "Multicast Group", # 対象マルチキャストIP
+            "VLAN",
         ]
         
-        try:
-            with open(filepath, mode="w", newline="", encoding="utf-8-sig") as f:
-                writer = csv.writer(f)
-                writer.writerow(headers)
-        except Exception:
-            # ファイル書き込み権限エラー等は上位で処理するか無視
-            pass
+        with open(filepath, mode="w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
 
     def write_log(
         self,
@@ -86,7 +93,9 @@ class LoggerManager:
         src_ip: str,
         src_mac: str,
         group_ip: str,
-        resolved_name: Optional[str] = None
+        resolved_name: Optional[str] = None,
+        *,
+        vlan: Optional[int] = None,
     ) -> Optional[str]:
         """ネットワーク状態遷移イベントをCSVログファイルに追記保存します。
 
@@ -96,6 +105,7 @@ class LoggerManager:
             src_mac (str): 送信元MACアドレス。
             group_ip (str): 宛先マルチキャストIPアドレス。
             resolved_name (Optional[str]): 解決済みの機器名。Noneの場合はIPアドレスが補填されます。
+            vlan (Optional[int]): VLAN ID。タグ無しの場合は空欄。
 
         Returns:
             Optional[str]: 実際に書き込まれたログファイルのパス（テスト検証用）。
@@ -107,19 +117,17 @@ class LoggerManager:
         display_name = resolved_name if resolved_name else src_ip
 
         # 機器名などはネットワーク上の第三者が決められる値のため、数式として評価されないよう無害化する
-        row = [csv_safe(c) for c in (timestamp, event, display_name, src_ip, src_mac, group_ip)]
+        row = [csv_safe(c) for c in (timestamp, event, display_name, src_ip, src_mac, group_ip, vlan)]
 
         with self._lock:
-            filepath = self._get_current_log_filepath()
-            
-            # ファイルが新規作成される場合、先にヘッダを書き込む
-            if not os.path.exists(filepath):
-                self._write_csv_headers(filepath)
-
             try:
+                filepath = self._get_current_log_filepath()
+                if not os.path.exists(filepath):
+                    self._write_csv_headers(filepath)
                 with open(filepath, mode="a", newline="", encoding="utf-8-sig") as f:
                     writer = csv.writer(f)
                     writer.writerow(row)
                 return filepath
-            except Exception:
+            except (OSError, ValueError, csv.Error):
+                logger.exception("ライブCSVへの書き込みに失敗しました")
                 return None

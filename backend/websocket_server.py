@@ -77,7 +77,8 @@ class ClientState:
             hay = " ".join(
                 str(data.get(k, "")) for k in ("src_ip", "src_mac", "group_ip", "resolved_name", "tag")
             ).lower()
-            if self.text not in hay:
+            vlan = data.get("vlan")
+            if self.text not in hay and (vlan is None or self.text != f"vlan {vlan}"):
                 return False
         return True
 

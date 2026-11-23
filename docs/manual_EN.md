@@ -116,7 +116,8 @@ Try the UI without any hardware: `python scripts/demo_simulator.py` replays a sa
 
 - **Who joined which group?** Look at the map, or filter the log to *IGMP* and type the group address in the filter box.
 - **Is there an IGMP querier?** Check the *Querier* chip. "No querier!" means IGMP snooping on the switches may fail; "Multiple
-  queriers" shows all of them and which one should win (the lowest IP). Query version (v1/v2/v3), robustness and interval are
+  queriers" means more than one querier in the same VLAN and shows which one should win (the lowest IP); one querier
+  per VLAN is normal (section 10). Query version (v1/v2/v3), robustness and interval are
   shown in the log detail and CSV.
 - **Am I seeing everything?** Check that the yellow *No Join/Leave seen* chip is not shown and that the groups you care about are
   coloured, not grey. If not, the PC is probably on a normal port of a snooping switch: move it to a mirror (SPAN) port (see section 1).
@@ -132,7 +133,7 @@ Try the UI without any hardware: `python scripts/demo_simulator.py` replays a sa
 | What | Where |
 |---|---|
 | PCAP recordings, CSV exports, logs | `%LOCALAPPDATA%\IGMP-FLOW\data\` (`captures`, `exports`, `logs`). Change with the environment variable `IGMP_FLOW_DATA_DIR` |
-| CSV columns | Timestamp, Event, Device Name, IP Address, MAC Address, Multicast Group, Protocol, Packets, Detail, Event Code |
+| CSV columns | Timestamp, Event, Device Name, IP Address, MAC Address, Multicast Group, Protocol, Packets, Detail, Event Code, VLAN (empty when untagged) |
 
 PCAP files keep audio packets as headers only (first 128 bytes) to save space; control traffic (IGMP, PTP, mDNS and so on) is stored in full.
 These files contain real IP/MAC addresses and device names, so treat them as confidential and do not upload them to public places.
@@ -153,6 +154,7 @@ Command line options of the app: `-i/--interface`, `--interactive`, `-p/--port`,
 | "Npcap is not installed" at start | Install Npcap (section 1.2) and restart |
 | NIC list empty, or nothing is captured | Run as administrator; check Npcap is installed; select the NIC connected to the mirror port; confirm the mirror is configured on the switch |
 | The map is a dense ball of labels | Update to 0.2.2 or later: many groups and devices are then drawn as summary nodes |
+| "Multiple queriers" on a network with several VLANs | Since 0.2.2 this appears only for more than one querier in the same VLAN (or, without VLAN tags, the same /24). See section 10 |
 | A lighting (sACN) network shows "Dante" | Fixed in 0.2.2: sACN and Dante are told apart by UDP port. A group seen only by its Join shows "sACN universe N or Dante" |
 | A group is on the map but grey / missing from Stream stats | Normal on a non-mirror port with IGMP snooping: IGMP-FLOW does not join, so the switch does not forward the stream here. Use a mirror (SPAN) port to see the stream itself |
 | "No Join/Leave seen" chip | The PC is on a normal port of a snooping switch. Mirror the uplink to the querier (or the devices' ports) to this PC's port |
@@ -209,3 +211,22 @@ as "sACN universe N or Dante" until its stream data is seen on this port.
 
 Sources: IANA *IPv4 Multicast Address Space Registry*; Audinate *Dante Information for Network Administrators*;
 RFC 2974 (SAP); RFC 4795 (LLMNR); UPnP Device Architecture (SSDP); ANSI E1.31 (sACN).
+
+## 10. Networks split into VLANs
+
+Audio, lighting, video and control are often kept in separate VLANs, each with its own IGMP querier. IGMP works per VLAN,
+so one querier per VLAN is normal.
+
+- **To see several VLANs at once**, mirror a trunk port (or several VLANs) to the PC's port. A normal access port shows only
+  its own VLAN.
+- **When VLAN tags are visible**, IGMP-FLOW records the VLAN ID of each event (CSV: last column *VLAN*). The map shows the
+  same group address in two VLANs as two nodes labelled *VLAN n*, links each querier only to the groups of its own VLAN, and
+  the *Querier* chip lists the elected querier per VLAN. "Multiple queriers" is reported only when one VLAN has more than one.
+  Type `vlan 10` in the filter box to show one VLAN.
+- **On Windows, the tags are often not visible**: many network adapter drivers remove the 802.1Q tag before capture software
+  sees the frame. Some adapters have a driver or registry setting that keeps the tags (Intel documents one for its adapters);
+  check your adapter's documentation. Without tags, IGMP-FLOW cannot tell VLANs apart: the same group address in two VLANs is
+  shown as one node. It then links each group to the querier in the same /24 subnet as its devices, and if it sees queriers
+  in different subnets, the chip says so ("probably separate VLANs") instead of warning about multiple queriers.
+
+Sources: Wireshark wiki *CaptureSetup/VLAN*; Intel support article 000005498 (keeping VLAN tags on Intel adapters).

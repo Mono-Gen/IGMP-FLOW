@@ -30,7 +30,7 @@ logger = logging.getLogger("IGMP-FLOW.Export")
 
 CSV_HEADERS = [
     "Timestamp", "Event", "Device Name", "IP Address", "MAC Address", "Multicast Group",
-    "Protocol", "Packets", "Detail", "Event Code",
+    "Protocol", "Packets", "Detail", "Event Code", "VLAN",
 ]
 # 集計行・通常行を時刻順に整列して書き出すためのバッファ窓(秒)
 _REORDER_WINDOW_S = 3.0
@@ -116,7 +116,9 @@ def _matches(
         hay = " ".join([
             ev.get("src_ip", ""), ev.get("src_mac", ""), ev.get("group_ip", ""), name, ev.get("tag", ""),
         ]).lower()
-        if text.lower() not in hay:
+        vlan = ev.get("vlan")
+        query = text.strip().lower()  # 画面の絞り込み(前後の空白を除く)と同じ扱いにする
+        if query not in hay and (vlan is None or query != f"vlan {vlan}"):
             return False
     if group and group not in ev.get("group_ip", ""):
         return False
@@ -174,7 +176,7 @@ def export_csv(
     seq = 0
     rows = 0
     packets = 0
-    agg: Dict[Tuple[int, str, str, str], Dict[str, Any]] = {}
+    agg: Dict[Tuple[int, str, str, str, Optional[int]], Dict[str, Any]] = {}
 
     out_dir = os.path.dirname(out_path)
     if out_dir:
@@ -204,6 +206,7 @@ def export_csv(
                 push(float(key[0]), [
                     _format_ts(float(key[0])), f"{ev['event']} (1s aggregate)", b["name"] or ev["src_ip"],
                     ev["src_ip"], ev["src_mac"], ev["group_ip"], ev["proto"], b["count"], _detail(ev), ev.get("event_code", ""),
+                    ev.get("vlan"),
                 ])
 
         for pkt in _iter_packets(pcap_paths, warnings):
@@ -219,7 +222,7 @@ def export_csv(
                 if ev["plane"] == PLANE_DATA and data_mode != "raw":
                     if data_mode == "none":
                         continue
-                    key = (int(ts), ev["proto"], ev["src_ip"], ev["group_ip"])
+                    key = (int(ts), ev["proto"], ev["src_ip"], ev["group_ip"], ev.get("vlan"))
                     bucket = agg.get(key)
                     if bucket is None:
                         agg[key] = {"ev": ev, "name": name, "count": 1}
@@ -229,6 +232,7 @@ def export_csv(
                     push(ts, [
                         _format_ts(ts), ev["event"], name or ev["src_ip"], ev["src_ip"], ev["src_mac"],
                         ev.get("group_ip", ""), ev["proto"], 1, _detail(ev), ev.get("event_code", ""),
+                        ev.get("vlan"),
                     ])
 
                 flush_agg(int(ts) - 1)
